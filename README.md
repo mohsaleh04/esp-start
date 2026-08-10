@@ -1,4 +1,4 @@
-# I've decided to start working with my new ESP32 as a hobby in Rust. 🦀
+# I've decided to start working with my new ESP32 as a hobby in Rust.
 ###### minimal project in rust
 
 A small playground for learning embedded Rust on the **ESP32-WROOM-32D**.

@@ -1,8 +1,10 @@
 # I've decided to start working with my new ESP32 as a hobby in Rust.
+
 ###### minimal project in rust
 
 A small playground for learning embedded Rust on the **ESP32-WROOM-32D**.
-I'm using this project to experiment with ESP32 hardware and understand embedded programming at a lower level — without Arduino or C/C++.
+I'm using this project to experiment with ESP32 hardware and understand embedded programming at a lower level — without
+Arduino or C/C++.
 
 Currently playing with:
 

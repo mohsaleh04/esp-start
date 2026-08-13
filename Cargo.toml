@@ -1,8 +1,8 @@
 [package]
-edition      = "2024"
-name         = "esp-start"
+edition = "2024"
+name = "esp-start"
 rust-version = "1.88"
-version      = "0.1.0"
+version = "0.1.0"
 
 [[bin]]
 name = "esp-start"
@@ -15,8 +15,10 @@ test = false
 bench = false
 
 [dependencies]
-esp-hal = { version = "~1.1.0", features = ["esp32"] }
-
+esp-hal = { version = "~1.1.0", features = ["esp32", "unstable"] }
+esp-radio = { version = "1.0.0-beta.0", features = ["esp32", "wifi", "esp-alloc"] }
+esp-rtos = { version = "0.3", features = ["esp32", "esp-radio", "esp-alloc"] }
+esp-alloc = { version = "0.10", features = ["esp32"] }
 
 esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32"] }
 
@@ -29,8 +31,11 @@ critical-section = "1.2.0"
 # Always build with some optimizations enabled.
 opt-level = "s"
 
+[profile.dev.package.esp-radio]
+opt-level = 3
+
 [profile.release]
 codegen-units = 1     # LLVM can perform better optimizations using a single thread
-debug         = 2     # prefer slower builds but better debugging experience
-lto           = 'fat'
-opt-level     = 's'
+debug = 2     # prefer slower builds but better debugging experience
+lto = 'fat'
+opt-level = 's'

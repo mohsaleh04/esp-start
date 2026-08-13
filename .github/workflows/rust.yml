@@ -50,7 +50,11 @@ jobs:
           espflash --version
 
       - name: Run Checks
-        run: cargo check --verbose
+        run: |
+          source "$HOME/export-esp.sh"
+          cargo check
 
       - name: Try Build
-        run: cargo build --verbose
+        run: |
+          source "$HOME/export-esp.sh"
+          cargo build

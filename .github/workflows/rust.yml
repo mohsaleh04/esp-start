@@ -23,6 +23,7 @@ jobs:
         working-directory: /tmp
         run: |
           cargo +stable install espup --locked
+          cargo +stable install espflash --locked
           cargo +stable install probe-rs-tools --locked
 
       - name: Install ESP Rust toolchain
@@ -33,10 +34,20 @@ jobs:
         run: |
           cat "$HOME/export-esp.sh" >> "$GITHUB_ENV"
 
+      - name: Verify ESP toolchain
+        run: |
+          source "$HOME/export-esp.sh"
+          echo "PATH=$PATH"
+          which rustc
+          which xtensa-esp32-elf-gcc
+          rustc --version
+          xtensa-esp32-elf-gcc --version
+          
       - name: Show versions
         run: |
           rustc --version
           cargo --version
+          espflash --version
 
       - name: Run Checks
         run: cargo check --verbose

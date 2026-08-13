@@ -13,7 +13,7 @@ use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use critical_section::Mutex;
 use esp_hal::clock::CpuClock;
-use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+use esp_hal::gpio::{Event, Input, InputConfig, Io, Level, Output, OutputConfig, Pull};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::time::Duration;
 use esp_hal::timer::timg::TimerGroup;
@@ -30,11 +30,14 @@ fn panic(_: &PanicInfo) -> ! {
 // Don't Remove This Code! Code for bootloader
 esp_bootloader_esp_idf::esp_app_desc!();
 
+const TIMER_DELAY: u64 = 300;
+
 static TIMER_COUNTER: AtomicU32 = AtomicU32::new(0);
-static TIMER_DELAY: AtomicU32 = AtomicU32::new(500);
-static TIMER_FIRED: AtomicBool = AtomicBool::new(false);
 static TIMER: Mutex<RefCell<Option<PeriodicTimer<'static, esp_hal::Blocking>>>> =
     Mutex::new(RefCell::new(None));
+
+static TEST_BTN: Mutex<RefCell<Option<Input<'static>>>> = Mutex::new(RefCell::new(None));
+static TEST_BTN_PRESSED: AtomicBool = AtomicBool::new(false);
 
 #[handler]
 fn timer_handler() {
@@ -45,8 +48,18 @@ fn timer_handler() {
         }
     });
 
-    TIMER_FIRED.store(true, Ordering::Relaxed);
     TIMER_COUNTER.fetch_add(1, Ordering::Relaxed);
+}
+
+#[handler]
+fn gpio_handler() {
+     critical_section::with(|cs| {
+        let mut btn = TEST_BTN.borrow_ref_mut(cs);
+        if let Some(btn) = btn.as_mut() {
+            btn.clear_interrupt();
+            TEST_BTN_PRESSED.store(btn.is_low(), Ordering::Relaxed);
+        }
+    });
 }
 
 // ######################
@@ -74,6 +87,19 @@ fn main() -> ! {
     let mut btn_led = Output::new(_peripherals.GPIO21, Level::Low, OutputConfig::default());
     let test_btn = Input::new(_peripherals.GPIO22, pullup_btn_cfg);
 
+    let mut io = Io::new(_peripherals.IO_MUX);
+    io.set_interrupt_handler(gpio_handler);
+
+    critical_section::with(|cs| {
+        TEST_BTN.borrow_ref_mut(cs).replace(test_btn);
+    });
+    critical_section::with(|cs| {
+        let mut this_btn = TEST_BTN.borrow_ref_mut(cs);
+        let btn = this_btn.as_mut().unwrap();
+
+        btn.listen(Event::AnyEdge);
+    });
+
     uart.write_str("Setup timer ...\r\n").unwrap();
     // let sw_interrupt = SoftwareInterruptControl::new(_peripherals.SW_INTERRUPT);
 
@@ -88,7 +114,7 @@ fn main() -> ! {
         let mut timer = TIMER.borrow_ref_mut(cs);
         let timer = timer.as_mut().unwrap();
 
-        timer.start(Duration::from_millis(TIMER_DELAY.load(Ordering::Relaxed) as u64)).unwrap();
+        timer.start(Duration::from_millis(TIMER_DELAY)).unwrap();
         timer.listen();
     });
 
@@ -116,20 +142,17 @@ fn main() -> ! {
 
     let mut last_event_call_count = 0;
     loop {
-        let counter = TIMER_COUNTER.load(Ordering::Relaxed);
+        let timer_counter = TIMER_COUNTER.load(Ordering::Relaxed);
         let mut i = 0;
-        while i < counter.wrapping_sub(last_event_call_count) {
+        while i < timer_counter.wrapping_sub(last_event_call_count) {
             write!(uart, "L{}: toggle led!\r\n", last_event_call_count + i + 1).unwrap();
-            led.set_high();
-            delay(50);
-            led.set_low();
-            delay(50);
+            led.toggle();
             i += 1
         }
-        last_event_call_count = counter;
+        last_event_call_count = timer_counter;
 
-        if test_btn.is_low() {
-            uart.write_str("set btn is down\r\n").unwrap();
+        let test_btn_pressed = TEST_BTN_PRESSED.load(Ordering::Relaxed);
+        if test_btn_pressed {
             btn_led.set_high();
         } else {
             btn_led.set_low();

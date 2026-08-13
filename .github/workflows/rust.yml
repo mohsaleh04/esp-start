@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,11 +12,34 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-    - uses: actions/checkout@v4
-    - name: Install Deps
-      run: cargo install espup espflash,locked probe-rs
-    - name: Run Checks
-      run: cargo check --verbose
-    - name: Try Build
-      run: cargo build --verbose
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup toolchain install stable
+
+      - name: Install ESP tools
+        working-directory: /tmp
+        run: |
+          cargo +stable install espup --locked
+          cargo +stable install probe-rs-tools --locked
+
+      - name: Install ESP Rust toolchain
+        run: |
+          espup install
+
+      - name: Load ESP environment
+        run: |
+          cat "$HOME/export-esp.sh" >> "$GITHUB_ENV"
+
+      - name: Show versions
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Run Checks
+        run: cargo check --verbose
+
+      - name: Try Build
+        run: cargo build --verbose

@@ -10,12 +10,14 @@
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use esp_hal::clock::CpuClock;
+use esp_hal::ledc::{channel::Number as ChannelNumber, timer::Number as TimerNumber};
 use esp_hal::uart::Uart;
 use esp_hal::{Blocking, main};
 use esp_start::com::uart;
 use esp_start::io::OutputPins;
+use esp_start::pwm::PwmConfig;
 use esp_start::utils::delay;
-use esp_start::{io, timer};
+use esp_start::{io, pwm, timer};
 
 const DEBOUNCE_DELAY: u64 = 10;
 const TIMER_DELAY: u64 = 300;
@@ -36,45 +38,47 @@ esp_bootloader_esp_idf::esp_app_desc!();
 )]
 #[main]
 fn main() -> ! {
-    // esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1024);
-    // esp_alloc::heap_allocator!(size: 36 * 1024);
-
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let _peripherals = esp_hal::init(config);
 
     let mut uart = uart::setup(_peripherals.UART0, _peripherals.GPIO1, _peripherals.GPIO3);
     let mut output_pins = OutputPins::new(_peripherals.GPIO23, _peripherals.GPIO21);
 
+    let mut pwm_control = pwm::setup(
+        _peripherals.LEDC,
+        _peripherals.GPIO19,
+        TimerNumber::Timer0,
+        ChannelNumber::Channel1,
+        PwmConfig::led_default(),
+    );
+
     io::setup(_peripherals.IO_MUX, _peripherals.GPIO22);
     timer::setup(_peripherals.TIMG0, TIMER_DELAY);
 
-    // let sw_interrupt = SoftwareInterruptControl::new(_peripherals.SW_INTERRUPT);
-    // esp_rtos::start(timg0.timer1, sw_interrupt.software_interrupt0);
-
-    // uart.write_str("Prepare wifi ...").unwrap();
-    // let mut wifi = match WifiController::new(_peripherals.WIFI, Default::default()) {
-    //     Ok(wifi) => {
-    //         uart.write_str("WiFi controller initialized!\r\n").unwrap();
-    //         wifi
-    //     }
-    //     Err(_) => {
-    //         uart.write_str("WiFi init FAILED!\r\n").unwrap();
-    //
-    //         // ERR LED Blinking
-    //         TIMER_DELAY.store(150, Ordering::Relaxed);
-    //         loop {
-    //             if TIMER_FIRED.swap(false, Ordering::Relaxed) {
-    //                 uart.write_str("toggle led!\r\n").unwrap();
-    //                 led.toggle();
-    //             }
-    //         }
-    //     }
-    // };
+    ////////
 
     let mut last_event_call_count = 0;
+
+    let mut fade_mulp = 1;
+    let mut down = false;
     loop {
         blink_led(&mut uart, &mut output_pins, &mut last_event_call_count);
         control_led_if_button_pressed(&mut output_pins);
+
+        pwm_control.set_duty(fade_mulp * 10, 100);
+        if down {
+            if fade_mulp < 1 {
+                down = false;
+                continue;
+            }
+            fade_mulp -= 1;
+        } else {
+            if fade_mulp >= 10 {
+                down = true;
+                continue;
+            }
+            fade_mulp += 1;
+        }
 
         delay(DEBOUNCE_DELAY);
     }

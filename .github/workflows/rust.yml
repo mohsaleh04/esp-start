@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
   pull_request:
-    branches: ["main"]
+    branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -42,7 +42,7 @@ jobs:
           which xtensa-esp32-elf-gcc
           rustc --version
           xtensa-esp32-elf-gcc --version
-          
+
       - name: Show versions
         run: |
           rustc --version

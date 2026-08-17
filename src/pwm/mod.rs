@@ -1,46 +1,47 @@
 mod config;
 mod controller;
 
-pub use config::PwmConfig;
+pub use config::PwmTimerConfig;
+pub use config::PwmChannelConfig;
 pub use controller::PwmController;
 
 use esp_hal::ledc::timer::Timer;
 use esp_hal::{
     gpio::interconnect::PeripheralOutput,
     ledc::{
-        channel::{config::Config as ChannelConfig, ChannelIFace, Number as ChannelNumber}, timer::{config::Config as TimerConfig, Number as TimerNumber, TimerIFace}, LSGlobalClkSource,
-        Ledc,
-        LowSpeed,
+        LSGlobalClkSource, Ledc, LowSpeed,
+        channel::{ChannelIFace, Number as ChannelNumber, config::Config as ChannelConfig},
+        timer::{TimerIFace, config::Config as TimerConfig},
     },
-    peripherals::LEDC,
 };
-use static_cell::StaticCell;
 
-static PWM_TIMER: StaticCell<Timer<'static, LowSpeed>> = StaticCell::new();
+pub fn setup_timer(timer: &mut Timer<'static, LowSpeed>, config: PwmTimerConfig) {
+    timer
+        .configure(TimerConfig {
+            duty: config.duty,
+            clock_source: config.clock_source,
+            frequency: config.frequency,
+        })
+        .unwrap();
+}
 
-pub fn setup(
-    ledc: LEDC<'static>,
-    output_pin: impl PeripheralOutput<'static>,
-    timer_number: TimerNumber,
+pub fn setup_channel<'d>(
+    ledc: &mut Ledc<'d>,
+    output_pin: impl PeripheralOutput<'d>,
+    timer: &'d Timer<'static, LowSpeed>,
     channel_number: ChannelNumber,
-    config: PwmConfig,
-) -> PwmController<'static> {
-    let mut ledc = Ledc::new(ledc);
+    config: PwmChannelConfig,
+) -> PwmController<'d> {
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
-    let timer = PWM_TIMER.init(ledc.timer::<LowSpeed>(timer_number));
-    timer.configure(TimerConfig {
-        duty: config.duty,
-        clock_source: config.clock_source,
-        frequency: config.frequency,
-    }).unwrap();
-
     let mut channel = ledc.channel::<LowSpeed>(channel_number, output_pin);
-    channel.configure(ChannelConfig {
-        timer,
-        duty_pct: config.duty_percent,
-        drive_mode: config.drive_mode,
-    }).unwrap();
+    channel
+        .configure(ChannelConfig {
+            timer,
+            duty_pct: config.duty_percent,
+            drive_mode: config.drive_mode,
+        })
+        .unwrap();
 
     PwmController::new(channel)
 }

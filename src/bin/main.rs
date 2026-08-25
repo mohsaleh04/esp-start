@@ -10,15 +10,29 @@
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use esp_hal::clock::CpuClock;
+use esp_hal::ledc::timer::Timer;
+use esp_hal::ledc::{
+    channel::Number as ChannelNumber, timer::Number as TimerNumber, Ledc, LowSpeed,
+};
+use esp_hal::time::Instant;
 use esp_hal::uart::Uart;
-use esp_hal::{Blocking, main};
+use esp_hal::{main, Blocking};
 use esp_start::com::uart;
 use esp_start::io::OutputPins;
+use esp_start::pwm::{PwmChannelConfig, PwmTimerConfig};
 use esp_start::utils::delay;
-use esp_start::{io, timer};
+use esp_start::{io, pwm, timer};
+use static_cell::StaticCell;
 
 const DEBOUNCE_DELAY: u64 = 10;
 const TIMER_DELAY: u64 = 300;
+static PWM_TIMER: StaticCell<Timer<'static, LowSpeed>> = StaticCell::new();
+
+enum LedMode {
+    Blink,
+    Fade,
+    Off
+}
 
 // #############
 
@@ -36,45 +50,100 @@ esp_bootloader_esp_idf::esp_app_desc!();
 )]
 #[main]
 fn main() -> ! {
-    // esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1024);
-    // esp_alloc::heap_allocator!(size: 36 * 1024);
-
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let _peripherals = esp_hal::init(config);
 
     let mut uart = uart::setup(_peripherals.UART0, _peripherals.GPIO1, _peripherals.GPIO3);
     let mut output_pins = OutputPins::new(_peripherals.GPIO23, _peripherals.GPIO21);
 
+    let mut ledc = Ledc::new(_peripherals.LEDC);
+    let pwm_timer = PWM_TIMER.init(ledc.timer::<LowSpeed>(TimerNumber::Timer0));
+    pwm::setup_timer(pwm_timer, PwmTimerConfig::default(500));
+
+    let mut pwm_control = pwm::setup_channel(
+        &mut ledc,
+        _peripherals.GPIO19,
+        pwm_timer,
+        ChannelNumber::Channel1,
+        PwmChannelConfig::default(),
+    );
+
+    let mut pwm_control2 = pwm::setup_channel(
+        &mut ledc,
+        _peripherals.GPIO18,
+        pwm_timer,
+        ChannelNumber::Channel2,
+        PwmChannelConfig::default(),
+    );
+
     io::setup(_peripherals.IO_MUX, _peripherals.GPIO22);
     timer::setup(_peripherals.TIMG0, TIMER_DELAY);
 
-    // let sw_interrupt = SoftwareInterruptControl::new(_peripherals.SW_INTERRUPT);
-    // esp_rtos::start(timg0.timer1, sw_interrupt.software_interrupt0);
-
-    // uart.write_str("Prepare wifi ...").unwrap();
-    // let mut wifi = match WifiController::new(_peripherals.WIFI, Default::default()) {
-    //     Ok(wifi) => {
-    //         uart.write_str("WiFi controller initialized!\r\n").unwrap();
-    //         wifi
-    //     }
-    //     Err(_) => {
-    //         uart.write_str("WiFi init FAILED!\r\n").unwrap();
-    //
-    //         // ERR LED Blinking
-    //         TIMER_DELAY.store(150, Ordering::Relaxed);
-    //         loop {
-    //             if TIMER_FIRED.swap(false, Ordering::Relaxed) {
-    //                 uart.write_str("toggle led!\r\n").unwrap();
-    //                 led.toggle();
-    //             }
-    //         }
-    //     }
-    // };
+    ////////
 
     let mut last_event_call_count = 0;
+
+    let mut led_mod = LedMode::Off;
+
+    let mut pwm_led_fade_mulp = 1;
+    let mut pwm_led_fade_down = false;
+
+    let mut last_button_pressed: Option<Instant> = None;
     loop {
-        blink_led(&mut uart, &mut output_pins, &mut last_event_call_count);
-        control_led_if_button_pressed(&mut output_pins);
+        let mut button_act_permitted = true;
+        if io::test_button_pressed() {
+            if let Some(last_btn_act) = last_button_pressed.as_mut() {
+                if Instant::now().duration_since_epoch().as_millis()
+                    - last_btn_act.duration_since_epoch().as_millis()
+                    <= 700 {
+                    button_act_permitted = false;
+                }
+            }
+
+            if button_act_permitted {
+                led_mod = switch_led_mode(led_mod);
+                last_button_pressed = Some(Instant::now());
+
+                pwm_control.off();
+                pwm_control2.off();
+                output_pins.blink_led.set_low();
+                output_pins.test_led.set_high();
+            }
+        } else {
+            output_pins.test_led.set_low();
+        }
+
+        // Handle Menu
+        match led_mod {
+            LedMode::Blink =>
+                blink_led(&mut uart, &mut output_pins, &mut last_event_call_count),
+            LedMode::Fade => {
+                let upper_bound = 10;
+                pwm_control.set_duty(pwm_led_fade_mulp * 10, 100);
+                pwm_control2.set_duty((upper_bound - pwm_led_fade_mulp) * 10, 100);
+                if pwm_led_fade_down {
+                    if pwm_led_fade_mulp < 1 {
+                        pwm_led_fade_down = false;
+                        pwm_led_fade_mulp = 0;
+                        continue;
+                    }
+                    pwm_led_fade_mulp -= 1;
+                } else {
+                    if pwm_led_fade_mulp >= upper_bound {
+                        pwm_led_fade_down = true;
+                        pwm_led_fade_mulp = upper_bound;
+                        continue;
+                    }
+                    pwm_led_fade_mulp += 1;
+                }
+            },
+            LedMode::Off => {
+                output_pins.test_led.set_low();
+                output_pins.blink_led.set_low();
+                pwm_control.off();
+                pwm_control2.off();
+            }
+        }
 
         delay(DEBOUNCE_DELAY);
     }
@@ -82,11 +151,11 @@ fn main() -> ! {
 
 // #####################
 
-fn control_led_if_button_pressed(output_pins: &mut OutputPins) {
-    if io::test_button_pressed() {
-        output_pins.test_led.set_high();
-    } else {
-        output_pins.test_led.set_low();
+fn switch_led_mode(led_mod: LedMode) -> LedMode {
+    match led_mod {
+        LedMode::Off => LedMode::Blink,
+        LedMode::Blink => LedMode::Fade,
+        LedMode::Fade => LedMode::Off
     }
 }
 

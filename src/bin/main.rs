@@ -17,7 +17,7 @@ use esp_hal::ledc::{
 use esp_hal::time::Instant;
 use esp_hal::uart::Uart;
 use esp_hal::{Blocking, main};
-use esp_hal::gpio::{Input, InputConfig};
+use esp_hal::gpio::{Input};
 use esp_hal::pcnt::channel::EdgeMode;
 use esp_hal::pcnt::Pcnt;
 use esp_start::com::uart;
@@ -25,6 +25,7 @@ use esp_start::io::{OutputPins, PinConfig};
 use esp_start::utils::delay;
 use esp_start::{io, pwm, timer};
 use static_cell::StaticCell;
+use esp_start::pwm::{PwmChannelConfig, PwmTimerConfig};
 
 const DEBOUNCE_DELAY: u64 = 10;
 const TIMER_DELAY: u64 = 300;
@@ -114,6 +115,9 @@ fn main() -> ! {
     let mut pwm_led_fade_down = false;
 
     let mut last_button_pressed: Option<Instant> = None;
+
+    let mut last_pcnt_count = 0;
+
     loop {
         let mut button_act_permitted = true;
         if io::test_button_pressed() {
@@ -138,14 +142,10 @@ fn main() -> ! {
             output_pins.test_led.set_low();
         }
 
-        // Handler Menu
+        // --- LED Handler Menu ---
         match led_mod {
             LedMode::Blink => {
                 blink_led(&mut uart, &mut output_pins, &mut last_event_call_count);
-
-                // TODO: Needed an extra push button in _GPIO33_ for create this PCNT pulse  (Eventhough could be a clock generator like NE555P cercuit.)
-                let count = &unit.value();
-                write!(uart, "current pcnt value: {}\r\n", count).unwrap();
             },
             LedMode::Fade => {
                 let upper_bound = 10;
@@ -173,6 +173,14 @@ fn main() -> ! {
                 pwm_control.off();
                 pwm_control2.off();
             }
+        }
+
+
+        // TODO: Needed an extra push button in _GPIO33_ for create this PCNT pulse  (Even though could be a clock generator like NE555P cercuit.)
+        let count = &unit.value();
+        if last_pcnt_count != *count {
+            write!(uart, "current pcnt value: {}\r\n", count).unwrap();
+            last_pcnt_count = *count;
         }
       
         delay(DEBOUNCE_DELAY);

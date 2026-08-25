@@ -12,8 +12,11 @@ use core::panic::PanicInfo;
 use esp_hal::clock::CpuClock;
 use esp_hal::uart::Uart;
 use esp_hal::{Blocking, main};
+use esp_hal::gpio::{Input, InputConfig};
+use esp_hal::pcnt::channel::EdgeMode;
+use esp_hal::pcnt::Pcnt;
 use esp_start::com::uart;
-use esp_start::io::OutputPins;
+use esp_start::io::{OutputPins, PinConfig};
 use esp_start::utils::delay;
 use esp_start::{io, timer};
 
@@ -48,35 +51,35 @@ fn main() -> ! {
     io::setup(_peripherals.IO_MUX, _peripherals.GPIO22);
     timer::setup(_peripherals.TIMG0, TIMER_DELAY);
 
-    // let sw_interrupt = SoftwareInterruptControl::new(_peripherals.SW_INTERRUPT);
-    // esp_rtos::start(timg0.timer1, sw_interrupt.software_interrupt0);
+    let pcnt = Pcnt::new(_peripherals.PCNT);
 
-    // uart.write_str("Prepare wifi ...").unwrap();
-    // let mut wifi = match WifiController::new(_peripherals.WIFI, Default::default()) {
-    //     Ok(wifi) => {
-    //         uart.write_str("WiFi controller initialized!\r\n").unwrap();
-    //         wifi
-    //     }
-    //     Err(_) => {
-    //         uart.write_str("WiFi init FAILED!\r\n").unwrap();
-    //
-    //         // ERR LED Blinking
-    //         TIMER_DELAY.store(150, Ordering::Relaxed);
-    //         loop {
-    //             if TIMER_FIRED.swap(false, Ordering::Relaxed) {
-    //                 uart.write_str("toggle led!\r\n").unwrap();
-    //                 led.toggle();
-    //             }
-    //         }
-    //     }
-    // };
+    let unit = pcnt.unit0;
+    let input = Input::new(
+        _peripherals.GPIO33,
+        PinConfig::PullUp.as_input(),
+    );
+    let signal = input.peripheral_input();
+
+    let channel = &unit.channel0;
+
+    channel.set_edge_signal(signal);
+
+    channel.set_input_mode(
+        EdgeMode::Increment,
+        EdgeMode::Hold,
+    );
+
+    unit.clear();
+    unit.resume();
 
     let mut last_event_call_count = 0;
     loop {
         blink_led(&mut uart, &mut output_pins, &mut last_event_call_count);
         control_led_if_button_pressed(&mut output_pins);
+        let count = &unit.value();
+        write!(uart, "current pcnt value: {}\r\n", count).unwrap();
 
-        delay(DEBOUNCE_DELAY);
+        // delay(DEBOUNCE_DELAY);
     }
 }
 

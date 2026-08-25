@@ -16,10 +16,12 @@ use esp_hal::ledc::{
 };
 use esp_hal::time::Instant;
 use esp_hal::uart::Uart;
-use esp_hal::{main, Blocking};
+use esp_hal::{Blocking, main};
+use esp_hal::gpio::{Input, InputConfig};
+use esp_hal::pcnt::channel::EdgeMode;
+use esp_hal::pcnt::Pcnt;
 use esp_start::com::uart;
-use esp_start::io::OutputPins;
-use esp_start::pwm::{PwmChannelConfig, PwmTimerConfig};
+use esp_start::io::{OutputPins, PinConfig};
 use esp_start::utils::delay;
 use esp_start::{io, pwm, timer};
 use static_cell::StaticCell;
@@ -81,6 +83,29 @@ fn main() -> ! {
 
     ////////
 
+    let pcnt = Pcnt::new(_peripherals.PCNT);
+
+    let unit = pcnt.unit0;
+    let input = Input::new(
+        _peripherals.GPIO33,
+        PinConfig::PullUp.as_input(),
+    );
+    let signal = input.peripheral_input();
+
+    let channel = &unit.channel0;
+
+    channel.set_edge_signal(signal);
+
+    channel.set_input_mode(
+        EdgeMode::Increment,
+        EdgeMode::Hold,
+    );
+
+    unit.clear();
+    unit.resume();
+
+    ////////
+
     let mut last_event_call_count = 0;
 
     let mut led_mod = LedMode::Off;
@@ -93,8 +118,8 @@ fn main() -> ! {
         let mut button_act_permitted = true;
         if io::test_button_pressed() {
             if let Some(last_btn_act) = last_button_pressed.as_mut() {
-                if Instant::now().duration_since_epoch().as_millis()
-                    - last_btn_act.duration_since_epoch().as_millis()
+                if (Instant::now().duration_since_epoch().as_millis()
+                      - last_btn_act.duration_since_epoch().as_millis())
                     <= 700 {
                     button_act_permitted = false;
                 }
@@ -113,10 +138,15 @@ fn main() -> ! {
             output_pins.test_led.set_low();
         }
 
-        // Handle Menu
+        // Handler Menu
         match led_mod {
-            LedMode::Blink =>
-                blink_led(&mut uart, &mut output_pins, &mut last_event_call_count),
+            LedMode::Blink => {
+                blink_led(&mut uart, &mut output_pins, &mut last_event_call_count);
+
+                // TODO: Needed an extra push button in _GPIO33_ for create this PCNT pulse  (Eventhough could be a clock generator like NE555P cercuit.)
+                let count = &unit.value();
+                write!(uart, "current pcnt value: {}\r\n", count).unwrap();
+            },
             LedMode::Fade => {
                 let upper_bound = 10;
                 pwm_control.set_duty(pwm_led_fade_mulp * 10, 100);
@@ -144,7 +174,7 @@ fn main() -> ! {
                 pwm_control2.off();
             }
         }
-
+      
         delay(DEBOUNCE_DELAY);
     }
 }

@@ -23,12 +23,12 @@ use esp_hal::{main, Blocking};
 use esp_start::com::uart;
 use esp_start::io::{OutputPins, PinConfig};
 use esp_start::pwm::{PwmChannelConfig, PwmTimerConfig};
-use esp_start::utils::delay;
 use esp_start::{io, pwm, timer};
 use static_cell::StaticCell;
 
-const DEBOUNCE_DELAY: u64 = 10;
-const TIMER_DELAY: u64 = 300;
+const DEBOUNCE_DURATION_MS: u64 = 700;
+const TIMER_DELAY_MS: u64 = 300;
+
 static PWM_TIMER: StaticCell<Timer<'static, LowSpeed>> = StaticCell::new();
 
 enum LedMode {
@@ -80,7 +80,7 @@ fn main() -> ! {
     );
 
     io::setup(_peripherals.IO_MUX, _peripherals.GPIO22);
-    timer::setup(_peripherals.TIMG0, TIMER_DELAY);
+    timer::setup(_peripherals.TIMG0, TIMER_DELAY_MS);
 
     ////////
 
@@ -117,8 +117,7 @@ fn main() -> ! {
         if io::test_button_pressed() {
             if let Some(last_btn_act) = last_button_pressed.as_mut() {
                 if (Instant::now().duration_since_epoch().as_millis()
-                    - last_btn_act.duration_since_epoch().as_millis())
-                    <= 700
+                    - last_btn_act.duration_since_epoch().as_millis()) <= DEBOUNCE_DURATION_MS
                 {
                     button_act_permitted = false;
                 }
@@ -143,6 +142,7 @@ fn main() -> ! {
                 blink_led(&mut uart, &mut output_pins, &mut last_event_call_count);
             }
             LedMode::Fade => {
+                // uart.write_str("pwm leds selected.\r\n").unwrap();
                 let upper_bound = 10;
                 pwm_control.set_duty(pwm_led_fade_mulp * 10, 100);
                 pwm_control2.set_duty((upper_bound - pwm_led_fade_mulp) * 10, 100);
@@ -176,8 +176,6 @@ fn main() -> ! {
             write!(uart, "current pcnt value: {}\r\n", count).unwrap();
             last_pcnt_count = *count;
         }
-
-        delay(DEBOUNCE_DELAY);
     }
 }
 

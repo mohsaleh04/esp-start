@@ -10,20 +10,19 @@
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use esp_hal::clock::CpuClock;
-use esp_hal::gpio::Input;
 use esp_hal::ledc::timer::Timer;
 use esp_hal::ledc::{
-    channel::Number as ChannelNumber, timer::Number as TimerNumber, Ledc, LowSpeed,
+    Ledc, LowSpeed, channel::Number as ChannelNumber, timer::Number as TimerNumber,
 };
-use esp_hal::pcnt::channel::EdgeMode;
 use esp_hal::pcnt::Pcnt;
+use esp_hal::pcnt::channel::EdgeMode;
 use esp_hal::time::Instant;
 use esp_hal::uart::Uart;
-use esp_hal::{main, Blocking};
+use esp_hal::{Blocking, main};
 use esp_start::com::uart;
 use esp_start::io::{OutputPins, PinConfig};
 use esp_start::pwm::{PwmChannelConfig, PwmTimerConfig};
-use esp_start::{io, pwm, timer};
+use esp_start::{io, pcnt, pwm, timer};
 use static_cell::StaticCell;
 
 const DEBOUNCE_DURATION_MS: u64 = 700;
@@ -59,6 +58,7 @@ fn main() -> ! {
     let mut uart = uart::setup(_peripherals.UART0, _peripherals.GPIO1, _peripherals.GPIO3);
     let mut output_pins = OutputPins::new(_peripherals.GPIO23, _peripherals.GPIO21);
 
+    // === PWM | LEDC ===
     let mut ledc = Ledc::new(_peripherals.LEDC);
     let pwm_timer = PWM_TIMER.init(ledc.timer::<LowSpeed>(TimerNumber::Timer0));
     pwm::setup_timer(pwm_timer, PwmTimerConfig::default(500));
@@ -79,22 +79,20 @@ fn main() -> ! {
         PwmChannelConfig::default(),
     );
 
+    // === Interrupts (IO/Timer) ===
     io::setup(_peripherals.IO_MUX, _peripherals.GPIO22);
     timer::setup(_peripherals.TIMG0, TIMER_DELAY_MS);
 
-    ////////
-
+    // === PCNT (Pulse Counter) ===
     let pcnt = Pcnt::new(_peripherals.PCNT);
-
     let unit = pcnt.unit0;
-    let input = Input::new(_peripherals.GPIO33, PinConfig::PullUp.as_input());
-    let signal = input.peripheral_input();
-
-    let channel = &unit.channel0;
-
-    channel.set_edge_signal(signal);
-
-    channel.set_input_mode(EdgeMode::Increment, EdgeMode::Hold);
+    pcnt::setup(
+        &unit.channel0,
+        _peripherals.GPIO33,
+        PinConfig::PullUp.as_input(),
+        EdgeMode::Increment,
+        EdgeMode::Hold,
+    );
 
     unit.clear();
     unit.resume();
@@ -104,7 +102,6 @@ fn main() -> ! {
     let mut last_event_call_count = 0;
 
     let mut led_mod = LedMode::Off;
-
     let mut pwm_led_fade_mulp = 1;
     let mut pwm_led_fade_down = false;
 
@@ -117,7 +114,8 @@ fn main() -> ! {
         if io::test_button_pressed() {
             if let Some(last_btn_act) = last_button_pressed.as_mut() {
                 if (Instant::now().duration_since_epoch().as_millis()
-                    - last_btn_act.duration_since_epoch().as_millis()) <= DEBOUNCE_DURATION_MS
+                    - last_btn_act.duration_since_epoch().as_millis())
+                    <= DEBOUNCE_DURATION_MS
                 {
                     button_act_permitted = false;
                 }
@@ -170,7 +168,7 @@ fn main() -> ! {
             }
         }
 
-        // TODO: Needed an extra push button in _GPIO33_ for create this PCNT pulse  (Even though could be a clock generator like NE555P cercuit.)
+        // TODO: Needed an extra push button in _GPIO33_ for create this PCNT pulse  (Even though could be a clock generator like NE555P circuit.)
         let count = &unit.value();
         if last_pcnt_count != *count {
             write!(uart, "current pcnt value: {}\r\n", count).unwrap();

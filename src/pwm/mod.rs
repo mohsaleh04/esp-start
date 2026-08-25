@@ -1,17 +1,17 @@
 mod config;
 mod controller;
 
-pub use config::PwmTimerConfig;
 pub use config::PwmChannelConfig;
+pub use config::PwmTimerConfig;
 pub use controller::PwmController;
 
 use esp_hal::ledc::timer::Timer;
 use esp_hal::{
     gpio::interconnect::PeripheralOutput,
     ledc::{
-        LSGlobalClkSource, Ledc, LowSpeed,
-        channel::{ChannelIFace, Number as ChannelNumber, config::Config as ChannelConfig},
-        timer::{TimerIFace, config::Config as TimerConfig},
+        channel::{config::Config as ChannelConfig, ChannelIFace, Number as ChannelNumber}, timer::{config::Config as TimerConfig, TimerIFace}, LSGlobalClkSource,
+        Ledc,
+        LowSpeed,
     },
 };
 

@@ -9,9 +9,9 @@ use esp_hal::ledc::timer::Timer;
 use esp_hal::{
     gpio::interconnect::PeripheralOutput,
     ledc::{
-        channel::{config::Config as ChannelConfig, ChannelIFace, Number as ChannelNumber}, timer::{config::Config as TimerConfig, TimerIFace}, LSGlobalClkSource,
-        Ledc,
-        LowSpeed,
+        LSGlobalClkSource, Ledc, LowSpeed,
+        channel::{ChannelIFace, Number as ChannelNumber, config::Config as ChannelConfig},
+        timer::{TimerIFace, config::Config as TimerConfig},
     },
 };
 

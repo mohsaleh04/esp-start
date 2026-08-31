@@ -1,7 +1,7 @@
 use esp_hal::gpio::Input;
 
-mod states;
 pub(super) mod handler;
+mod states;
 
 pub(super) fn is_test_button_pressed() -> bool {
     states::is_test_button_pressed()

@@ -1,8 +1,8 @@
 use core::cell::RefCell;
 use critical_section::Mutex;
+use esp_hal::Blocking;
 use esp_hal::time::Duration;
 use esp_hal::timer::PeriodicTimer;
-use esp_hal::Blocking;
 
 pub(super) static TIMER: Mutex<RefCell<Option<PeriodicTimer<'static, Blocking>>>> =
     Mutex::new(RefCell::new(None));

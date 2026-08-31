@@ -6,10 +6,7 @@ pub struct OutputPins {
 }
 
 impl OutputPins {
-    pub fn new(
-        blink_led: impl OutputPin + 'static,
-        test_led: impl OutputPin + 'static,
-    ) -> Self {
+    pub fn new(blink_led: impl OutputPin + 'static, test_led: impl OutputPin + 'static) -> Self {
         Self {
             blink_led: Output::new(blink_led, Level::Low, OutputConfig::default()),
             test_led: Output::new(test_led, Level::Low, OutputConfig::default()),

@@ -8,7 +8,12 @@
 #![deny(clippy::large_stack_frames)]
 
 use core::fmt::Write;
+use core::net::Ipv4Addr;
 use core::panic::PanicInfo;
+use embassy_executor::Spawner;
+use embassy_net::IpAddress;
+use embassy_net::tcp::State;
+use esp_hal::Blocking;
 use esp_hal::clock::CpuClock;
 use esp_hal::ledc::timer::Timer;
 use esp_hal::ledc::{
@@ -17,16 +22,19 @@ use esp_hal::ledc::{
 use esp_hal::pcnt::Pcnt;
 use esp_hal::pcnt::channel::EdgeMode;
 use esp_hal::time::Instant;
+use esp_hal::timer::timg::TimerGroup;
 use esp_hal::uart::Uart;
-use esp_hal::{Blocking, main};
 use esp_start::com::uart;
 use esp_start::io::{OutputPins, PinConfig};
+use esp_start::net::socket;
 use esp_start::pwm::{PwmChannelConfig, PwmTimerConfig};
-use esp_start::{io, pcnt, pwm, timer};
+use esp_start::{io, net, pcnt, pwm, runtime, timer, wifi};
 use static_cell::StaticCell;
 
 const DEBOUNCE_DURATION_MS: u64 = 700;
 const TIMER_DELAY_MS: u64 = 300;
+const WIFI_SSID: &str = "HomeADSL";
+const WIFI_PASSWORD: &str = "Home#1405";
 
 static PWM_TIMER: StaticCell<Timer<'static, LowSpeed>> = StaticCell::new();
 
@@ -40,6 +48,10 @@ enum LedMode {
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
+    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+    let peripherals = esp_hal::init(config);
+    let mut uart = uart::setup(peripherals.UART0, peripherals.GPIO1, peripherals.GPIO3);
+    uart.write_str("PANIIIIIIC!!!!\r\n\r\n").expect("failed uart panic!");
     loop {}
 }
 
@@ -50,22 +62,24 @@ esp_bootloader_esp_idf::esp_app_desc!();
     clippy::large_stack_frames,
     reason = "it's not unusual to allocate larger buffers etc. in main"
 )]
-#[main]
-fn main() -> ! {
-    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    let _peripherals = esp_hal::init(config);
+#[esp_rtos::main]
+async fn main(spawner: Spawner) -> ! {
+    runtime::allocate_heap();
 
-    let mut uart = uart::setup(_peripherals.UART0, _peripherals.GPIO1, _peripherals.GPIO3);
-    let mut output_pins = OutputPins::new(_peripherals.GPIO23, _peripherals.GPIO21);
+    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+    let peripherals = esp_hal::init(config);
+
+    let mut uart = uart::setup(peripherals.UART0, peripherals.GPIO1, peripherals.GPIO3);
+    let mut output_pins = OutputPins::new(peripherals.GPIO23, peripherals.GPIO21);
 
     // === PWM | LEDC ===
-    let mut ledc = Ledc::new(_peripherals.LEDC);
+    let mut ledc = Ledc::new(peripherals.LEDC);
     let pwm_timer = PWM_TIMER.init(ledc.timer::<LowSpeed>(TimerNumber::Timer0));
     pwm::setup_timer(pwm_timer, PwmTimerConfig::default(500));
 
     let mut pwm_control = pwm::setup_channel(
         &mut ledc,
-        _peripherals.GPIO19,
+        peripherals.GPIO19,
         pwm_timer,
         ChannelNumber::Channel1,
         PwmChannelConfig::default(),
@@ -73,22 +87,77 @@ fn main() -> ! {
 
     let mut pwm_control2 = pwm::setup_channel(
         &mut ledc,
-        _peripherals.GPIO18,
+        peripherals.GPIO18,
         pwm_timer,
         ChannelNumber::Channel2,
         PwmChannelConfig::default(),
     );
 
     // === Interrupts (IO/Timer) ===
-    io::setup(_peripherals.IO_MUX, _peripherals.GPIO22);
-    timer::setup(_peripherals.TIMG0, TIMER_DELAY_MS);
+    io::setup(peripherals.IO_MUX, peripherals.GPIO22);
+
+    let timg0 = TimerGroup::new(peripherals.TIMG0);
+    timer::setup(timg0.timer0, TIMER_DELAY_MS);
+    runtime::setup_scheduler(peripherals.SW_INTERRUPT, timg0.timer1);
+
+    // === WIFI ===
+    let (mut wifi_controller, wifi_interfaces) = wifi::setup(peripherals.WIFI);
+    let station = wifi_interfaces.station;
+    write!(uart, "wifi module init\r\n").unwrap();
+
+    uart.write_str("connecting to wifi ...\r\n").unwrap();
+    wifi::config::set_station_config(&mut wifi_controller, WIFI_SSID, Some(WIFI_PASSWORD));
+
+    uart.write_str("network stack init\r\n").unwrap();
+    let (net_stack, net_runner) = net::setup(station);
+    net::runner::run_wifi_net_task(spawner, net_runner);
+
+    let wifi_connection_success = wifi::connection::connect(&mut wifi_controller, &mut uart).await;
+
+    if wifi_connection_success {
+        net::wait_for_config_up(net_stack, &mut uart).await;
+
+        uart.write_str("Network is UP \r\n").unwrap();
+        if let Some(config) = net_stack.config_v4() {
+            write!(uart, "\tIPv4 config: {:?}\r\n", config).unwrap();
+        }
+    }
+
+    let mut conn_socket = socket::new(net_stack);
+    let mut tcp_socket_up = false;
+    if wifi_connection_success && net_stack.is_config_up() {
+        // Create TCP Socket
+        uart.write_str("Creating a TCP Connection to your laptop...\r\n")
+            .unwrap();
+        socket::connect_tcp(
+            &mut conn_socket,
+            IpAddress::Ipv4(Ipv4Addr::new(192, 168, 1, 101)),
+            80,
+        ).await;
+        if conn_socket.state() == State::Established {
+            uart.write_str("connection applied\r\n").unwrap();
+            tcp_socket_up = true;
+        } else {
+            write!(uart, "failed to connect socket: {:?}", conn_socket.state()).unwrap();
+        }
+
+        // Request
+        let test_request =
+            b"GET /gpio/1 HTTP/1.1\r\n\
+            Host: 192.168.1.101\r\n\
+            \r\n";
+        conn_socket
+            .write(test_request)
+            .await
+            .expect("write request failed");
+    }
 
     // === PCNT (Pulse Counter) ===
-    let pcnt = Pcnt::new(_peripherals.PCNT);
+    let pcnt = Pcnt::new(peripherals.PCNT);
     let unit = pcnt.unit0;
     pcnt::setup(
         &unit.channel0,
-        _peripherals.GPIO33,
+        peripherals.GPIO33,
         PinConfig::PullUp.as_input(),
         EdgeMode::Increment,
         EdgeMode::Hold,
@@ -108,6 +177,8 @@ fn main() -> ! {
     let mut last_button_pressed: Option<Instant> = None;
 
     let mut last_pcnt_count = 0;
+
+    let mut test_response_buffer = [0u8; 512];
 
     loop {
         let mut button_act_permitted = true;
@@ -173,6 +244,32 @@ fn main() -> ! {
         if last_pcnt_count != *count {
             write!(uart, "current pcnt value: {}\r\n", count).unwrap();
             last_pcnt_count = *count;
+        }
+
+        // ======== WIFI =========
+        if tcp_socket_up {
+            write!(
+                uart,
+                "\t- Current socket status: {}\r\n\r\n",
+                conn_socket.state()
+            ).unwrap();
+            match conn_socket.read(&mut test_response_buffer).await {
+                Ok(0) => {
+                    uart.write_str("TCP Connection Closed\r\n").unwrap();
+                    tcp_socket_up = false;
+                }
+                Ok(size) => {
+                    if let Ok(text) = core::str::from_utf8(&test_response_buffer[..size]) {
+                        write!(uart, "[WIFI] {}\r\n", text).unwrap();
+                    } else {
+                        uart.write_str("Unparsable data received!").unwrap();
+                    }
+                }
+                Err(error) => {
+                    write!(uart, "[WIFI] Failed to receive data: {:?}", error).unwrap();
+                    tcp_socket_up = false;
+                }
+            }
         }
     }
 }

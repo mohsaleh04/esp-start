@@ -672,6 +672,7 @@ name = "esp-start"
 version = "0.4.6"
 dependencies = [
  "critical-section",
+ "embedded-hal 1.0.0",
  "esp-alloc",
  "esp-bootloader-esp-idf",
  "esp-hal",

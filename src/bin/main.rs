@@ -1,22 +1,13 @@
 #![no_std]
 #![no_main]
 
+use core::fmt::Write;
 use core::panic::PanicInfo;
 
-use embedded_hal::spi::SpiBus;
-
-use esp_hal::{
-    clock::CpuClock,
-    gpio::{Level, Output, OutputConfig},
-    main,
-    spi::{
-        master::{Config as SpiConfig, Spi},
-        Mode,
-    },
-    time::Rate,
-};
-
-use esp_start::utils::delay;
+use esp_hal::{clock::CpuClock, main};
+use esp_start::com::uart;
+use esp_start::io::ScreenOutPins;
+use esp_start::screen::{Screen, ScreenController, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
@@ -28,267 +19,41 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 #[main]
 fn main() -> ! {
-    let config =
-        esp_hal::Config::default()
-            .with_cpu_clock(CpuClock::max());
-
+    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    // ---------------------------------------------------------
-    // GPIO
-    // ---------------------------------------------------------
-
-    // Backlight
-    let mut backlight = Output::new(
-        peripherals.GPIO22,
-        Level::High,
-        OutputConfig::default(),
+    let mut uart = uart::setup(peripherals.UART0, peripherals.GPIO1, peripherals.GPIO3);
+    let screen_out_pins = ScreenOutPins::new(
+        peripherals.GPIO22, // backlight
+        peripherals.GPIO21, // rst
+        peripherals.GPIO19, // dc
+        peripherals.GPIO5,  // cs
     );
 
-    // Reset: active LOW
-    // We intentionally create it LOW so the display starts
-    // in reset while the other pins are being configured.
-    let mut rst = Output::new(
-        peripherals.GPIO21,
-        Level::High,
-        OutputConfig::default(),
-    );
+    let mut screen = Screen::new(ScreenController::new(
+        peripherals.SPI2,
+        screen_out_pins.backlight,
+        screen_out_pins.dc,
+        screen_out_pins.cs,
+        screen_out_pins.rst,
+        peripherals.GPIO18, // SCK
+        peripherals.GPIO23, // MOSI
+    ));
 
-    // D/C:
-    // LOW  = command
-    // HIGH = display data
-    let mut dc = Output::new(
-        peripherals.GPIO19,
-        Level::Low,
-        OutputConfig::default(),
-    );
+    uart.write_str("[LCD] Initializing ...\r\n").unwrap();
+    screen.init(0x36);
 
-    // SCE / CS is active LOW
-    let mut cs = Output::new(
-        peripherals.GPIO5,
-        Level::High,
-        OutputConfig::default(),
-    );
+    screen.clear();
+    screen.toggle_backlight();
 
-    // ---------------------------------------------------------
-    // SPI3 / VSPI
-    //
-    // SCLK -> GPIO18
-    // MOSI -> GPIO23
-    // ---------------------------------------------------------
-
-    let mut spi = Spi::new(
-        peripherals.SPI3,
-        SpiConfig::default()
-            // Deliberately very slow for initial debugging.
-            .with_frequency(Rate::from_mhz(1))
-            .with_mode(Mode::_0),
-    )
-        .expect("failed to configure SPI")
-        .with_sck(peripherals.GPIO18)
-        .with_mosi(peripherals.GPIO23);
-
-    // Give power / GPIOs some time to settle.
-    delay(20);
-
-    // ---------------------------------------------------------
-    // RESET
-    // ---------------------------------------------------------
-
-    cs.set_high();
-
-    rst.set_low();
-    delay(10);
-
-    rst.set_high();
-    delay(10);
-
-    // ---------------------------------------------------------
-    // COMMAND 0x21
-    //
-    // Function set:
-    // PD = 0 -> active
-    // V  = 0 -> horizontal addressing
-    // H  = 1 -> extended instruction set
-    // ---------------------------------------------------------
-
-    dc.set_low();
-    delay(1);
-
-    cs.set_low();
-    delay(1);
-
-    spi.write(&[0x21]).unwrap();
-    spi.flush().unwrap();
-
-    cs.set_high();
-    delay(1);
-
-    // ---------------------------------------------------------
-    // COMMAND 0x04
-    //
-    // Temperature coefficient = 0
-    // Same default used by the Linux driver.
-    // ---------------------------------------------------------
-
-    dc.set_low();
-    delay(1);
-
-    cs.set_low();
-    delay(1);
-
-    spi.write(&[0x04]).unwrap();
-    spi.flush().unwrap();
-
-    cs.set_high();
-    delay(1);
-
-    // ---------------------------------------------------------
-    // COMMAND 0x14
-    //
-    // Bias = 4
-    //
-    // 0x10 | 4 = 0x14
-    // Same value used by the Linux driver.
-    // ---------------------------------------------------------
-
-    dc.set_low();
-    delay(1);
-
-    cs.set_low();
-    delay(1);
-
-    spi.write(&[0x14]).unwrap();
-    spi.flush().unwrap();
-
-    cs.set_high();
-    delay(1);
-
-    // ---------------------------------------------------------
-    // COMMAND 0xA8
-    //
-    // VOP / contrast = 40
-    //
-    // 0x80 | 40 = 0xA8
-    //
-    // Linux driver:
-    // DEFAULT_GAMMA "40"
-    // ---------------------------------------------------------
-
-    dc.set_low();
-    delay(1);
-
-    cs.set_low();
-    delay(1);
-
-    spi.write(&[0xB8]).unwrap();
-    spi.flush().unwrap();
-
-    cs.set_high();
-    delay(1);
-
-    // ---------------------------------------------------------
-    // COMMAND 0x22
-    //
-    // Function set:
-    // PD = 0 -> active
-    // V  = 1 -> vertical addressing
-    // H  = 0 -> basic instruction set
-    //
-    // Exactly like the Linux driver.
-    // ---------------------------------------------------------
-
-    dc.set_low();
-    delay(1);
-
-    cs.set_low();
-    delay(1);
-
-    spi.write(&[0x22]).unwrap();
-    spi.flush().unwrap();
-
-    cs.set_high();
-    delay(1);
-
-    // ---------------------------------------------------------
-    // COMMAND 0x0C
-    //
-    // Normal display mode
-    // ---------------------------------------------------------
-
-    dc.set_low();
-    delay(1);
-
-    cs.set_low();
-    delay(1);
-
-    spi.write(&[0x0C]).unwrap();
-    spi.flush().unwrap();
-
-    cs.set_high();
-    delay(1);
-
-    // ---------------------------------------------------------
-    // SET X = 0
-    // ---------------------------------------------------------
-
-    dc.set_low();
-    delay(1);
-
-    cs.set_low();
-    delay(1);
-
-    spi.write(&[0x80]).unwrap();
-    spi.flush().unwrap();
-
-    cs.set_high();
-    delay(1);
-
-    // ---------------------------------------------------------
-    // SET Y = 0
-    // ---------------------------------------------------------
-
-    dc.set_low();
-    delay(1);
-
-    cs.set_low();
-    delay(1);
-
-    spi.write(&[0x40]).unwrap();
-    spi.flush().unwrap();
-
-    cs.set_high();
-    delay(1);
-
-    // ---------------------------------------------------------
-    // DISPLAY DATA
-    //
-    // 84 * 48 / 8 = 504 bytes
-    //
-    // Every bit = 1 => every pixel ON
-    // ---------------------------------------------------------
-
-    let framebuffer = [0xA0u8; 504];
-
-    dc.set_high();
-    delay(1);
-
-    cs.set_low();
-    delay(1);
-
-    spi.write(&framebuffer).unwrap();
-    spi.flush().unwrap();
-
-    cs.set_high();
-    //
-    // // ---------------------------------------------------------
-    // // Finished
-    // // ---------------------------------------------------------
-    //
-    // loop {
-    //     // Blink backlight just so we know firmware is alive.
-    //     backlight.toggle();
-    //     delay(1000);
-    // }
-    loop {}
+    let mut swap = false;
+    loop {
+        for y in 0..SCREEN_HEIGHT as u8 {
+            for x in 0..SCREEN_WIDTH as u8 {
+                screen.set_pixel(x, y, !swap);
+                write!(uart, "[LCD] x:{} y:{} swap:{}\r\n", x, y, swap).unwrap();
+            }
+        }
+        swap = !swap;
+    }
 }

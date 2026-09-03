@@ -5,7 +5,6 @@ use esp_hal::peripherals::IO_MUX;
 mod output_pins;
 mod pins_config;
 mod interrupt;
-pub mod screen;
 
 pub use output_pins::ScreenOutPins;
 pub use pins_config::PinConfig;

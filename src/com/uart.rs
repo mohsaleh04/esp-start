@@ -8,7 +8,7 @@ pub fn setup(
     rx: GPIO3<'static>,
 ) -> Uart<'static, Blocking> {
     Uart::new(uart, Config::default())
-        .unwrap()
+        .expect("Failed to setup UART")
         .with_tx(tx)
         .with_rx(rx)
 }

@@ -7,7 +7,8 @@ use core::panic::PanicInfo;
 use esp_hal::{clock::CpuClock, main};
 use esp_start::com::uart;
 use esp_start::io::ScreenOutPins;
-use esp_start::screen::{Screen, ScreenController, SCREEN_HEIGHT, SCREEN_WIDTH};
+use esp_start::screen::{ScreenController, ScreenDriver};
+use esp_start::utils::delay;
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
@@ -23,37 +24,35 @@ fn main() -> ! {
     let peripherals = esp_hal::init(config);
 
     let mut uart = uart::setup(peripherals.UART0, peripherals.GPIO1, peripherals.GPIO3);
+    uart.write_str("[LCD] Initializing ... ").unwrap();
+
     let screen_out_pins = ScreenOutPins::new(
         peripherals.GPIO22, // backlight
         peripherals.GPIO21, // rst
         peripherals.GPIO19, // dc
         peripherals.GPIO5,  // cs
     );
+    let mut screen = ScreenController::init(
+        0x36,
+        ScreenDriver::new(
+            peripherals.SPI2,
+            screen_out_pins.backlight,
+            screen_out_pins.dc,
+            screen_out_pins.cs,
+            screen_out_pins.rst,
+            peripherals.GPIO18, // SCK
+            peripherals.GPIO23, // MOSI
+        ),
+    );
 
-    let mut screen = Screen::new(ScreenController::new(
-        peripherals.SPI2,
-        screen_out_pins.backlight,
-        screen_out_pins.dc,
-        screen_out_pins.cs,
-        screen_out_pins.rst,
-        peripherals.GPIO18, // SCK
-        peripherals.GPIO23, // MOSI
-    ));
-
-    uart.write_str("[LCD] Initializing ...\r\n").unwrap();
-    screen.init(0x36);
+    screen.toggle_backlight();
+    uart.write_str("SUCCESS\r\n").unwrap();
 
     screen.clear();
-    screen.toggle_backlight();
+    screen.draw_rect((0, 0), 20, 20, true);
+    screen.draw_circle((24, 24), 15, true);
+    screen.draw_round_rect((32, 32), 30, 15, 3, true);
+    delay(10);
 
-    let mut swap = false;
-    loop {
-        for y in 0..SCREEN_HEIGHT as u8 {
-            for x in 0..SCREEN_WIDTH as u8 {
-                screen.set_pixel(x, y, !swap);
-                write!(uart, "[LCD] x:{} y:{} swap:{}\r\n", x, y, swap).unwrap();
-            }
-        }
-        swap = !swap;
-    }
+    loop {}
 }

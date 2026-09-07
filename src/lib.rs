@@ -1,3 +1,4 @@
+#![feature(core_float_math)]
 #![no_std]
 
 pub mod com;

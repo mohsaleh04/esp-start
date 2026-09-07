@@ -1,83 +1,111 @@
-use crate::utils::delay;
-use esp_hal::Blocking;
-use esp_hal::gpio::{Output, OutputPin as GpioPin};
-use esp_hal::peripherals::SPI2;
-use esp_hal::spi::Mode;
-use esp_hal::spi::master::{Config as SpiConfig, Spi};
-use esp_hal::time::Rate;
+use crate::screen::commands::{config, AddressingCommand, PositioningCommand, ScreenCommand};
+use crate::screen::{SCREEN_HEIGHT, SCREEN_WIDTH, ScreenDriver, validate_bounds};
+
+const SCREEN_BANKS: usize = SCREEN_HEIGHT / 8;
+const SCREEN_BUFFER_LEN: usize = SCREEN_BANKS * SCREEN_WIDTH;
+
+struct ScreenCursor { x: u8, y: u8 }
 
 pub struct ScreenController {
-    spi: Spi<'static, Blocking>,
-    dc: Output<'static>,
-    cs: Output<'static>,
-    rst: Output<'static>,
-    backlight: Output<'static>,
+    driver: ScreenDriver,
+    framebuffer: [u8; SCREEN_BUFFER_LEN],
+    cursor: ScreenCursor,
+    backlight_enabled: bool
 }
 
 impl ScreenController {
-    pub fn new(
-        spi_preph: SPI2<'static>,
-        backlight: Output<'static>,
-        dc: Output<'static>,
-        cs: Output<'static>,
-        rst: Output<'static>,
-        sck: impl GpioPin + 'static,
-        mosi: impl GpioPin + 'static,
-    ) -> Self {
-        Self {
-            spi: Self::setup_spi(spi_preph, sck, mosi),
-            backlight,
-            dc,
-            cs,
-            rst,
-        }
+    pub fn init(contrast: u8, screen_driver: ScreenDriver) -> Self {
+        let mut controller = Self::new(screen_driver);
+
+        controller.driver.reset();
+        controller.driver
+            .send_command(ScreenCommand::ExtendedFunctionSet as u8);
+        controller.driver
+            .send_command(ScreenCommand::SetTempCoeff as u8);
+        controller.driver
+            .send_command((ScreenCommand::SetBias as u8) | config::DEFAULT_BIAS);
+        controller.driver
+            .send_command((ScreenCommand::SetContrast as u8) | (contrast & config::MAX_CONTRAST));
+
+        controller.driver
+            .send_command(AddressingCommand::Horizontal as u8);
+        controller.driver
+            .send_command(ScreenCommand::NormalDisplayMode as u8);
+
+        controller
     }
 
-    fn setup_spi(
-        spi_preph: SPI2,
-        sck: impl GpioPin + 'static,
-        mosi: impl GpioPin + 'static,
-    ) -> Spi<Blocking> {
-        Spi::new(
-            spi_preph,
-            SpiConfig::default()
-                .with_frequency(Rate::from_mhz(4))
-                .with_mode(Mode::_0),
-        )
-        .expect("failed to setup screen spi")
-        .with_sck(sck)
-        .with_mosi(mosi)
+    pub fn clear(&mut self) {
+        self.reset_cursor();
+        self.framebuffer = [0; SCREEN_BUFFER_LEN];
+        self.driver.send_data(&self.framebuffer);
+        self.reset_cursor();
     }
 
     pub fn toggle_backlight(&mut self) {
-        self.backlight.toggle();
+        self.backlight_enabled = !self.backlight_enabled;
+        self.driver.set_backlight(self.backlight_enabled);
+    }
+}
+
+// -----------
+
+impl ScreenController {
+    fn new(driver: ScreenDriver) -> Self {
+        Self {
+            driver,
+            framebuffer: [0; SCREEN_BUFFER_LEN],
+            cursor: ScreenCursor { x: 0, y: 0 },
+            backlight_enabled: false
+        }
     }
 
-    pub(super) fn send_command(&mut self, command: u8) {
-        self.dc.set_low();
-        self.cs.set_low();
-
-        self.spi
-            .write(&[command])
-            .expect("failed to write command ScreenSPI");
-        self.cs.set_high();
+    pub(super) fn draw_px(&mut self, x: i16, y: i16, inverse: bool) {
+        if x < 0 || y < 0
+            || x >= SCREEN_WIDTH as i16 || y >= SCREEN_HEIGHT as i16 {
+            return;
+        }
+        let cursor_ok = self.set_cursor(x as u8, y as u8);
+        if cursor_ok {
+            self.set_pixel(!inverse);
+        }
     }
 
-    pub(super) fn send_data(&mut self, data: &[u8]) {
-        self.dc.set_high();
-        self.cs.set_low();
-
-        self.spi
-            .write(data)
-            .expect("failed to write data ScreenSPI");
-        self.cs.set_high();
+    pub(super) fn set_cursor(&mut self, x: u8, y: u8) -> bool {
+        if !validate_bounds(x, y) { return false; }
+        self.cursor.x = x;
+        self.cursor.y = y;
+        true
     }
 
-    pub(super) fn reset(&mut self) {
-        self.rst.set_low();
-        delay(10);
+    // ###############
 
-        self.rst.set_high();
-        delay(10);
+    fn set_pixel(&mut self, on: bool) {
+        let x = self.cursor.x;
+        let y = self.cursor.y;
+        let bank = y / 8;
+        let index = x as usize + bank as usize * SCREEN_WIDTH;
+        if on {
+            self.framebuffer[index] |= 1 << (y % 8);
+        } else {
+            self.framebuffer[index] &= !(1 << (y % 8));
+        }
+        self.set_cursor_bank(x, bank);
+        self.driver.send_data(&[self.framebuffer[index]]);
+    }
+
+    fn set_cursor_bank(&mut self, x: u8, bank: u8) {
+        if x >= SCREEN_WIDTH as u8 || bank >= SCREEN_BANKS as u8 {
+            return;
+        }
+        self.driver
+            .send_command((PositioningCommand::SetX as u8) | x);
+        self.driver
+            .send_command((PositioningCommand::SetBank as u8) | bank);
+    }
+
+    fn reset_cursor(&mut self) {
+        self.set_cursor(0, 0);
+        self.set_cursor_bank(0, 0);
     }
 }

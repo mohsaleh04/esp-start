@@ -24,8 +24,8 @@ fn main() -> ! {
     let peripherals = esp_hal::init(config);
 
     let mut uart = uart::setup(peripherals.UART0, peripherals.GPIO1, peripherals.GPIO3);
-    uart.write_str("[LCD] Initializing ... ").unwrap();
 
+    uart.write_str("[LCD] Initializing ... ").unwrap();
     let screen_out_pins = ScreenOutPins::new(
         peripherals.GPIO22, // backlight
         peripherals.GPIO21, // rst
@@ -44,7 +44,6 @@ fn main() -> ! {
             peripherals.GPIO23, // MOSI
         ),
     );
-
     screen.toggle_backlight();
     uart.write_str("SUCCESS\r\n").unwrap();
 

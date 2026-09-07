@@ -85,11 +85,13 @@ impl ScreenController {
         let y = self.cursor.y;
         let bank = y / 8;
         let index = x as usize + bank as usize * SCREEN_WIDTH;
+
         if on {
             self.framebuffer[index] |= 1 << (y % 8);
         } else {
             self.framebuffer[index] &= !(1 << (y % 8));
         }
+
         self.set_cursor_bank(x, bank);
         self.driver.send_data(&[self.framebuffer[index]]);
     }

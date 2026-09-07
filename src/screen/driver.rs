@@ -1,3 +1,4 @@
+use embedded_hal::spi::SpiBus;
 use crate::utils::delay;
 use esp_hal::Blocking;
 use esp_hal::gpio::{Output, OutputPin as GpioPin};
@@ -64,6 +65,7 @@ impl ScreenDriver {
         self.spi
             .write(&[command])
             .expect("failed to write command ScreenSPI");
+        self.spi.flush().expect("failed to flush data into ScreenSPI");
         self.cs.set_high();
     }
 
@@ -74,6 +76,7 @@ impl ScreenDriver {
         self.spi
             .write(data)
             .expect("failed to write data ScreenSPI");
+        self.spi.flush().expect("failed to flush data into ScreenSPI");
         self.cs.set_high();
     }
 

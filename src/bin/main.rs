@@ -48,9 +48,7 @@ fn main() -> ! {
     uart.write_str("SUCCESS\r\n").unwrap();
 
     screen.clear();
-    screen.draw_rect((0, 0), 20, 20, true);
-    screen.draw_circle((24, 24), 15, true);
-    screen.draw_round_rect((32, 32), 30, 15, 3, true);
+    screen.draw_filled_text((7, 14), "Hello :))");
     delay(10);
 
     loop {}

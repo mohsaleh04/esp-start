@@ -4,7 +4,9 @@ pub use crate::screen::driver::ScreenDriver;
 mod commands;
 mod driver;
 mod controller;
-mod drawer;
+mod drawer_shapes;
+mod drawer_text;
+mod font;
 
 pub const SCREEN_WIDTH: usize = 84;
 pub const SCREEN_HEIGHT: usize = 48;

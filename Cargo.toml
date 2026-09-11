@@ -2,7 +2,7 @@
 edition = "2024"
 name = "esp-start"
 rust-version = "1.88"
-version = "0.4.6"
+version = "0.5.9"
 
 [[bin]]
 name = "esp-start"

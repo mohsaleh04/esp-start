@@ -24,6 +24,7 @@ pub(super) enum PositioningCommand {
 }
 
 pub(crate) mod config {
+    pub const DEFAULT_CONTRAST: u8 = 0x36;
     pub(crate) const DEFAULT_BIAS: u8 = 0x03;
     pub(crate) const MAX_CONTRAST: u8 = 0x7F;
 }

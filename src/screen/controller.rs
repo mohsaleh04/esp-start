@@ -1,20 +1,21 @@
 use crate::screen::commands::{config, AddressingCommand, PositioningCommand, ScreenCommand};
 use crate::screen::{SCREEN_HEIGHT, SCREEN_WIDTH, ScreenDriver, validate_bounds};
+use crate::screen::spi::ScreenSpi;
 
 const SCREEN_BANKS: usize = SCREEN_HEIGHT / 8;
 const SCREEN_BUFFER_LEN: usize = SCREEN_BANKS * SCREEN_WIDTH;
 
 struct ScreenCursor { x: u8, y: u8 }
 
-pub struct ScreenController {
-    driver: ScreenDriver,
+pub struct ScreenController<SPI: ScreenSpi> {
+    driver: ScreenDriver<SPI>,
     framebuffer: [u8; SCREEN_BUFFER_LEN],
     cursor: ScreenCursor,
     backlight_enabled: bool
 }
 
-impl ScreenController {
-    pub fn init(contrast: u8, screen_driver: ScreenDriver) -> Self {
+impl<SPI: ScreenSpi> ScreenController<SPI> {
+    pub fn init(contrast: u8, screen_driver: ScreenDriver<SPI>) -> Self {
         let mut controller = Self::new(screen_driver);
 
         controller.driver.reset();
@@ -50,8 +51,8 @@ impl ScreenController {
 
 // -----------
 
-impl ScreenController {
-    fn new(driver: ScreenDriver) -> Self {
+impl<SPI: ScreenSpi> ScreenController<SPI> {
+    fn new(driver: ScreenDriver<SPI>) -> Self {
         Self {
             driver,
             framebuffer: [0; SCREEN_BUFFER_LEN],

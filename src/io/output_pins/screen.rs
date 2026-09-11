@@ -13,8 +13,7 @@ impl ScreenOutPins {
         screen_rst: impl OutputPin + 'static,
         screen_dc: impl OutputPin + 'static,
         screen_cs: impl OutputPin + 'static,
-    ) -> Self
-    {
+    ) -> Self {
         Self {
             backlight: Output::new(screen_led, Level::Low, OutputConfig::default()),
             rst: Output::new(screen_rst, Level::High, OutputConfig::default()),

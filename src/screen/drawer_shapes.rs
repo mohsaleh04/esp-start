@@ -1,4 +1,5 @@
 use crate::screen::{SCREEN_HEIGHT, SCREEN_WIDTH, ScreenController};
+use crate::screen::spi::ScreenSpi;
 
 enum Corner {
     TopLeft,
@@ -8,7 +9,7 @@ enum Corner {
     All,
 }
 
-impl ScreenController {
+impl<SPI: ScreenSpi> ScreenController<SPI> {
     pub fn draw_line(&mut self, start: (i16, i16), end: (i16, i16)) {
         let mut x0 = start.0;
         let mut y0 = start.1;

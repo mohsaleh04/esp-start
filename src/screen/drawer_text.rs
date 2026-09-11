@@ -1,10 +1,11 @@
 use crate::screen::{ScreenController, SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::screen::font::{ASCII_FONT_FIRST_INDEX, ASCII_FONT, ASCII_FONT_CHAR_WIDTH, ASCII_FONT_CHAR_SPACING, ASCII_FONT_CHAR_HEIGHT, ASCII_FONT_LINE_SPACING};
+use crate::screen::spi::ScreenSpi;
 
 /**
  *   Extended Screen Drawer Functions
  */
-impl ScreenController {
+impl<SPI: ScreenSpi> ScreenController<SPI> {
     pub fn draw_filled_text(&mut self, anchor: (i16, i16), text: &str) {
         self.draw_round_rect(
             anchor,
@@ -17,7 +18,7 @@ impl ScreenController {
 /**
  *   Basic Screen Drawer Functions
  */
-impl ScreenController {
+impl<SPI: ScreenSpi> ScreenController<SPI> {
     pub fn draw_char(&mut self, anchor: (i16, i16), c: char, inverse: bool) {
         if !c.is_ascii() { return; }
 

@@ -1,5 +1,6 @@
 pub use crate::screen::controller::ScreenController;
 pub use crate::screen::driver::ScreenDriver;
+pub use crate::screen::commands::config::DEFAULT_CONTRAST;
 
 mod commands;
 mod driver;
@@ -7,6 +8,7 @@ mod controller;
 mod drawer_shapes;
 mod drawer_text;
 mod font;
+mod spi;
 
 pub const SCREEN_WIDTH: usize = 84;
 pub const SCREEN_HEIGHT: usize = 48;

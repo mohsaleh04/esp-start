@@ -9,6 +9,7 @@ mod drawer_shapes;
 mod drawer_text;
 mod font;
 mod spi;
+mod fmt;
 
 pub const SCREEN_WIDTH: usize = 84;
 pub const SCREEN_HEIGHT: usize = 48;

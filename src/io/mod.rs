@@ -8,6 +8,7 @@ mod pins_config;
 mod interrupt;
 
 pub use output_pins::ScreenOutPins;
+pub use output_pins::ScreenPins;
 pub use output_pins::SdOutPins;
 pub use pins_config::PinConfig;
 

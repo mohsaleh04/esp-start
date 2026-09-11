@@ -15,32 +15,32 @@ pub struct ScreenController<SPI: ScreenSpi> {
 }
 
 impl<SPI: ScreenSpi> ScreenController<SPI> {
-    pub fn init(contrast: u8, screen_driver: ScreenDriver<SPI>) -> Self {
+    pub fn init(contrast: u8, screen_driver: ScreenDriver<SPI>) -> Result<Self, SPI::Error> {
         let mut controller = Self::new(screen_driver);
-
         controller.driver.reset();
         controller.driver
-            .send_command(ScreenCommand::ExtendedFunctionSet as u8);
+            .send_command(ScreenCommand::ExtendedFunctionSet as u8)?;
         controller.driver
-            .send_command(ScreenCommand::SetTempCoeff as u8);
+            .send_command(ScreenCommand::SetTempCoeff as u8)?;
         controller.driver
-            .send_command((ScreenCommand::SetBias as u8) | config::DEFAULT_BIAS);
+            .send_command((ScreenCommand::SetBias as u8) | config::DEFAULT_BIAS)?;
         controller.driver
-            .send_command((ScreenCommand::SetContrast as u8) | (contrast & config::MAX_CONTRAST));
+            .send_command((ScreenCommand::SetContrast as u8) | (contrast & config::MAX_CONTRAST))?;
 
         controller.driver
-            .send_command(AddressingCommand::Horizontal as u8);
+            .send_command(AddressingCommand::Horizontal as u8)?;
         controller.driver
-            .send_command(ScreenCommand::NormalDisplayMode as u8);
+            .send_command(ScreenCommand::NormalDisplayMode as u8)?;
 
-        controller
+        Ok(controller)
     }
 
-    pub fn clear(&mut self) {
-        self.reset_cursor();
+    pub fn clear(&mut self) -> Result<(), SPI::Error> {
+        self.reset_cursor()?;
         self.framebuffer = [0; SCREEN_BUFFER_LEN];
-        self.driver.send_data(&self.framebuffer);
-        self.reset_cursor();
+        self.driver.send_data(&self.framebuffer)?;
+        self.reset_cursor()?;
+        Ok(())
     }
 
     pub fn toggle_backlight(&mut self) {
@@ -61,15 +61,17 @@ impl<SPI: ScreenSpi> ScreenController<SPI> {
         }
     }
 
-    pub(super) fn draw_px(&mut self, x: i16, y: i16, inverse: bool) {
+    pub(super) fn draw_px(&mut self, x: i16, y: i16, inverse: bool) -> Result<bool, SPI::Error> {
         if x < 0 || y < 0
             || x >= SCREEN_WIDTH as i16 || y >= SCREEN_HEIGHT as i16 {
-            return;
+            return Ok(false)
         }
-        let cursor_ok = self.set_cursor(x as u8, y as u8);
-        if cursor_ok {
-            self.set_pixel(!inverse);
+
+        if !self.set_cursor(x as u8, y as u8) {
+            return Ok(false)
         }
+        self.set_pixel(!inverse)?;
+        Ok(true)
     }
 
     pub(super) fn set_cursor(&mut self, x: u8, y: u8) -> bool {
@@ -81,7 +83,7 @@ impl<SPI: ScreenSpi> ScreenController<SPI> {
 
     // ###############
 
-    fn set_pixel(&mut self, on: bool) {
+    fn set_pixel(&mut self, on: bool) -> Result<(), SPI::Error> {
         let x = self.cursor.x;
         let y = self.cursor.y;
         let bank = y / 8;
@@ -93,22 +95,25 @@ impl<SPI: ScreenSpi> ScreenController<SPI> {
             self.framebuffer[index] &= !(1 << (y % 8));
         }
 
-        self.set_cursor_bank(x, bank);
-        self.driver.send_data(&[self.framebuffer[index]]);
+        self.set_cursor_bank(x, bank)?;
+        self.driver.send_data(&[self.framebuffer[index]])?;
+        Ok(())
     }
 
-    fn set_cursor_bank(&mut self, x: u8, bank: u8) {
+    fn set_cursor_bank(&mut self, x: u8, bank: u8) -> Result<bool, SPI::Error> {
         if x >= SCREEN_WIDTH as u8 || bank >= SCREEN_BANKS as u8 {
-            return;
+            return Ok(false)
         }
         self.driver
-            .send_command((PositioningCommand::SetX as u8) | x);
+            .send_command((PositioningCommand::SetX as u8) | x)?;
         self.driver
-            .send_command((PositioningCommand::SetBank as u8) | bank);
+            .send_command((PositioningCommand::SetBank as u8) | bank)?;
+        Ok(true)
     }
 
-    fn reset_cursor(&mut self) {
+    fn reset_cursor(&mut self) -> Result<(), SPI::Error> {
         self.set_cursor(0, 0);
-        self.set_cursor_bank(0, 0);
+        self.set_cursor_bank(0, 0)?;
+        Ok(())
     }
 }

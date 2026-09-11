@@ -24,8 +24,8 @@ impl<SPI: ScreenSpi> ScreenController<SPI> {
         let mut error = dx + dy;
 
         loop {
-            if x0 >= 0 && x0 < SCREEN_WIDTH as i16 && y0 >= 0 && y0 < SCREEN_HEIGHT as i16 {
-                self.draw_px(x0, y0, false);
+            if (x0 >= 0 && x0 < SCREEN_WIDTH as i16) && (y0 >= 0 && y0 < SCREEN_HEIGHT as i16) {
+                self.draw_px(x0, y0, false).unwrap();
             }
 
             if x0 == x1 && y0 == y1 {
@@ -255,8 +255,8 @@ impl<SPI: ScreenSpi> ScreenController<SPI> {
             self.draw_line(fill_from.0, corner);
             self.draw_line(fill_from.1, invert_corner);
         } else {
-            self.draw_px(corner.0, corner.1, false);
-            self.draw_px(invert_corner.0, invert_corner.1, false);
+            self.draw_px(corner.0, corner.1, false).unwrap();
+            self.draw_px(invert_corner.0, invert_corner.1, false).unwrap();
         }
     }
 

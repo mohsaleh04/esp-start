@@ -27,6 +27,7 @@ fn main() -> ! {
     let peripherals = esp_hal::init(config);
 
     let mut uart = uart::setup(peripherals.UART0, peripherals.GPIO1, peripherals.GPIO3);
+    uart.write_str("\r\n").unwrap();
 
     let spi_bus = spi_bus::setup(
         peripherals.SPI2,
@@ -35,6 +36,7 @@ fn main() -> ! {
         peripherals.GPIO19, // MISO (for SD)
     );
 
+    // --- LCD ---
     uart.write_str("[LCD] Initializing ... ").unwrap();
     let screen_out_pins = ScreenOutPins::new(
         peripherals.GPIO22, // backlight
@@ -42,30 +44,57 @@ fn main() -> ! {
         peripherals.GPIO17, // dc
         peripherals.GPIO5,  // cs
     );
-    let screen_spi = RefCellDevice::new(&spi_bus, screen_out_pins.cs, Delay::new()).unwrap();
 
-    let mut screen = ScreenController::init(
+    let screen_res = ScreenController::init(
         DEFAULT_CONTRAST,
         ScreenDriver::new(
-            screen_spi,
-            screen_out_pins.dc,
-            screen_out_pins.rst,
-            screen_out_pins.backlight,
+            RefCellDevice::new(&spi_bus, screen_out_pins.cs, Delay::new()).unwrap(),
+            screen_out_pins.screen,
         ),
     );
+    if let Err(e) = screen_res {
+        uart.write_str("FAILED\r\n").unwrap();
+        write!(uart, "--> Error: ${:#?}", e).unwrap();
+        loop {}
+    }
+    let mut screen = screen_res.unwrap();
+    if screen.clear().is_err() {
+        uart.write_str("FAILED\r\n").unwrap();
+        write!(uart, "--> Error: Failed to clear screen").unwrap();
+        loop {}
+    }
+    screen.toggle_backlight();
     uart.write_str("SUCCESS\r\n").unwrap();
 
+    // --- SD Card ---
     uart.write_str("[SD] Initializing ... ").unwrap();
     let sd_out_pins = SdOutPins::new(
         peripherals.GPIO16, // cs
     );
     let sd_spi = RefCellDevice::new(&spi_bus, sd_out_pins.cs, Delay::new()).unwrap();
     let sd = SdCard::new(sd_spi, Delay::new());
-    uart.write_str("SUCCESS\r\n").unwrap();
 
-    screen.clear();
-    screen.toggle_backlight();
-    screen.draw_filled_text((7, 14), "Hello World :))");
+    let sd_size: u64;
+    match sd.num_bytes() {
+        Ok(size) => {
+            sd_size = size;
+            uart.write_str("SUCCESS\r\n").unwrap();
+            writeln!(uart, "[SD] Size: {} MB", size / 1048576).unwrap();
+        }
+
+        Err(err) => {
+            uart.write_str("FAILED\r\n").unwrap();
+            writeln!(uart, "--> Error: {:?}", err).unwrap();
+            loop {}
+        }
+    }
+
+    screen.draw_fmt(
+        (0, 0),
+        format_args!("Setup Complete\nSD Size: {} MB", sd_size / 1048576),
+        true,
+        false,
+    );
     delay(10);
 
     loop {}

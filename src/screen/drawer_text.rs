@@ -1,4 +1,7 @@
+use core::fmt;
+use core::fmt::Write;
 use crate::screen::{ScreenController, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::screen::fmt::ScreenFmtWriter;
 use crate::screen::font::{ASCII_FONT_FIRST_INDEX, ASCII_FONT, ASCII_FONT_CHAR_WIDTH, ASCII_FONT_CHAR_SPACING, ASCII_FONT_CHAR_HEIGHT, ASCII_FONT_LINE_SPACING};
 use crate::screen::spi::ScreenSpi;
 
@@ -6,6 +9,24 @@ use crate::screen::spi::ScreenSpi;
  *   Extended Screen Drawer Functions
  */
 impl<SPI: ScreenSpi> ScreenController<SPI> {
+    pub fn draw_fmt(
+        &mut self,
+        anchor: (i16, i16),
+        args: fmt::Arguments<'_>,
+        soft_wrap: bool,
+        inverse: bool,
+    ) {
+        let mut writer = 
+            ScreenFmtWriter::new(
+                self,
+                anchor, 
+                soft_wrap, 
+                inverse, 
+            );
+
+        writer.write_fmt(args).unwrap();
+    }
+    
     pub fn draw_filled_text(&mut self, anchor: (i16, i16), text: &str) {
         self.draw_round_rect(
             anchor,
@@ -32,7 +53,7 @@ impl<SPI: ScreenSpi> ScreenController<SPI> {
             for row_i in 0..ASCII_FONT_CHAR_HEIGHT {
                 if column & (1 << row_i) == 0 { continue; }
 
-                self.draw_px(anchor.0 + col_i as i16, anchor.1 + row_i as i16, inverse);
+                self.draw_px(anchor.0 + col_i as i16, anchor.1 + row_i as i16, inverse).unwrap();
             }
         }
     }

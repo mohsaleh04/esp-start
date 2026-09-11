@@ -1,24 +1,30 @@
 use esp_hal::gpio::{Level, Output, OutputConfig, OutputPin};
 
-pub struct ScreenOutPins {
+pub struct ScreenPins {
     pub backlight: Output<'static>,
     pub rst: Output<'static>,
     pub dc: Output<'static>,
+}
+
+pub struct ScreenOutPins {
+    pub screen: ScreenPins,
     pub cs: Output<'static>,
 }
 
 impl ScreenOutPins {
     pub fn new(
-        screen_led: impl OutputPin + 'static,
-        screen_rst: impl OutputPin + 'static,
-        screen_dc: impl OutputPin + 'static,
-        screen_cs: impl OutputPin + 'static,
+        backlight: impl OutputPin + 'static,
+        rst: impl OutputPin + 'static,
+        dc: impl OutputPin + 'static,
+        cs: impl OutputPin + 'static,
     ) -> Self {
         Self {
-            backlight: Output::new(screen_led, Level::Low, OutputConfig::default()),
-            rst: Output::new(screen_rst, Level::High, OutputConfig::default()),
-            dc: Output::new(screen_dc, Level::Low, OutputConfig::default()),
-            cs: Output::new(screen_cs, Level::High, OutputConfig::default()),
+            screen: ScreenPins {
+                backlight: Output::new(backlight, Level::Low, OutputConfig::default()),
+                rst: Output::new(rst, Level::High, OutputConfig::default()),
+                dc: Output::new(dc, Level::Low, OutputConfig::default()),
+            },
+            cs: Output::new(cs, Level::High, OutputConfig::default()),
         }
     }
 }

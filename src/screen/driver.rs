@@ -1,6 +1,7 @@
+use crate::io::ScreenPins;
+use crate::screen::spi::ScreenSpi;
 use crate::utils::delay;
 use esp_hal::gpio::Output;
-use crate::screen::spi::ScreenSpi;
 
 pub struct ScreenDriver<SPI: ScreenSpi> {
     spi: SPI,
@@ -10,17 +11,12 @@ pub struct ScreenDriver<SPI: ScreenSpi> {
 }
 
 impl<SPI: ScreenSpi> ScreenDriver<SPI> {
-    pub fn new(
-        spi: SPI,
-        dc: Output<'static>,
-        rst: Output<'static>,
-        backlight: Output<'static>,
-    ) -> Self {
+    pub fn new(spi: SPI, pins: ScreenPins) -> Self {
         Self {
             spi,
-            dc,
-            rst,
-            backlight,
+            dc: pins.dc,
+            rst: pins.rst,
+            backlight: pins.backlight,
         }
     }
 
@@ -32,26 +28,19 @@ impl<SPI: ScreenSpi> ScreenDriver<SPI> {
         }
     }
 
-    pub(super) fn send_command(&mut self, command: u8) {
+    pub(super) fn send_command(&mut self, command: u8) -> Result<(), SPI::Error> {
         self.dc.set_low();
-
-        self.spi
-            .write(&[command])
-            .expect("failed to write command ScreenSPI");
+        self.spi.write(&[command])
     }
 
-    pub(super) fn send_data(&mut self, data: &[u8]) {
+    pub(super) fn send_data(&mut self, data: &[u8]) -> Result<(), SPI::Error> {
         self.dc.set_high();
-
-        self.spi
-            .write(data)
-            .expect("failed to write data ScreenSPI");
+        self.spi.write(data)
     }
 
     pub(super) fn reset(&mut self) {
         self.rst.set_low();
         delay(10);
-
         self.rst.set_high();
         delay(10);
     }

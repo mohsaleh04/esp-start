@@ -48,9 +48,9 @@ fn main() -> ! {
         DEFAULT_CONTRAST,
         ScreenDriver::new(
             screen_spi,
-            screen_out_pins.backlight,
             screen_out_pins.dc,
             screen_out_pins.rst,
+            screen_out_pins.backlight,
         ),
     );
     uart.write_str("SUCCESS\r\n").unwrap();

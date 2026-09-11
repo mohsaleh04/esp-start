@@ -6,7 +6,7 @@ mod output_pins;
 mod pins_config;
 mod interrupt;
 
-pub use output_pins::OutputPins;
+pub use output_pins::ScreenOutPins;
 pub use pins_config::PinConfig;
 
 pub fn setup(

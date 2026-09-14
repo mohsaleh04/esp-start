@@ -8,3 +8,4 @@ pub mod timer;
 pub mod utils;
 pub mod screen;
 pub mod spi_bus;
+pub mod sd;

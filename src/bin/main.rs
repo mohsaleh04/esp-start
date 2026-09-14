@@ -2,16 +2,17 @@
 #![no_main]
 
 use core::fmt::Write;
+use core::ops::ControlFlow;
 use core::panic::PanicInfo;
 use embedded_hal_bus::spi::RefCellDevice;
-use embedded_sdmmc::SdCard;
+use embedded_sdmmc::{SdCard, VolumeIdx, VolumeManager};
 use esp_hal::delay::Delay;
 use esp_hal::{clock::CpuClock, main};
 use esp_start::com::uart;
 use esp_start::io::{ScreenOutPins, SdOutPins};
-use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
+use esp_start::screen::{ScreenController, ScreenDriver, DEFAULT_CONTRAST};
+use esp_start::sd::time::DummyTimeSource;
 use esp_start::spi_bus;
-use esp_start::utils::delay;
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
@@ -74,14 +75,22 @@ fn main() -> ! {
     let sd_spi = RefCellDevice::new(&spi_bus, sd_out_pins.cs, Delay::new()).unwrap();
     let sd = SdCard::new(sd_spi, Delay::new());
 
-    let sd_size: u64;
     match sd.num_bytes() {
         Ok(size) => {
-            sd_size = size;
             uart.write_str("SUCCESS\r\n").unwrap();
             writeln!(uart, "[SD] Size: {} MB", size / 1048576).unwrap();
-        }
 
+            screen.draw_fmt(
+                (0, 0),
+                format_args!("Setup Complete\nSD Size: {} MB", size / 1048576),
+                true,
+                false,
+            );
+        }
+        Err(embedded_sdmmc::SdCardError::CardNotFound) => {
+            screen.draw_text((0, 0), "Setup Complete\nSD not inserted", true, false);
+            loop {}
+        }
         Err(err) => {
             uart.write_str("FAILED\r\n").unwrap();
             writeln!(uart, "--> Error: {:?}", err).unwrap();
@@ -89,13 +98,30 @@ fn main() -> ! {
         }
     }
 
-    screen.draw_fmt(
-        (0, 0),
-        format_args!("Setup Complete\nSD Size: {} MB", sd_size / 1048576),
-        true,
-        false,
-    );
-    delay(10);
+    let volume_manager = VolumeManager::new(sd, DummyTimeSource);
+    match volume_manager.open_volume(VolumeIdx(0)) {
+        Ok(volume) => {
+            writeln!(uart, "Volume opened successfully").unwrap();
+
+            let root_dir = volume.open_root_dir().expect("failed to open dir");
+
+            root_dir
+                .iterate_dir(|entry| {
+                    writeln!(
+                        uart,
+                        "{} {:?} {} bytes",
+                        entry.name, entry.attributes, entry.size
+                    )
+                    .unwrap();
+                    ControlFlow::Continue(())
+                })
+                .expect("error in read dir");
+        }
+
+        Err(err) => {
+            writeln!(uart, "Open volume failed: {:?}", err).unwrap();
+        }
+    }
 
     loop {}
 }

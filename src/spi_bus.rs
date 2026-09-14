@@ -18,7 +18,7 @@ pub fn setup(
             .with_frequency(Rate::from_mhz(1))
             .with_mode(Mode::_0),
     )
-    .expect("failed to setup spi")
+    .expect("failed to setup sd")
     .with_sck(spi_sclk)
     .with_mosi(spi_mosi)
     .with_miso(spi_miso);

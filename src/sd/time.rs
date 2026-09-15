@@ -1,8 +1,8 @@
 use embedded_sdmmc::{TimeSource, Timestamp};
 
-pub struct DummyTimeSource;
+pub struct FixedTimeSource;
 
-impl TimeSource for DummyTimeSource {
+impl TimeSource for FixedTimeSource {
     fn get_timestamp(&self) -> Timestamp {
         Timestamp {
             year_since_1970: 56, // 2026

@@ -1,7 +1,6 @@
-use esp_hal::delay::Delay;
 use esp_hal::ledc::{
-    channel::{Channel, ChannelIFace},
     LowSpeed,
+    channel::{Channel, ChannelIFace},
 };
 
 pub struct PwmController<'d> {
@@ -13,9 +12,8 @@ impl<'d> PwmController<'d> {
         Self { channel }
     }
 
-    pub fn set_duty(&mut self, duty_prcnt: u8, duration: u32) {
+    pub fn set_duty(&mut self, duty_prcnt: u8) {
         self.channel.set_duty(duty_prcnt).unwrap();
-        Delay::new().delay_millis(duration);
     }
 
     pub fn off(&mut self) {

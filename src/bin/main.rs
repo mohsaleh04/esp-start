@@ -9,8 +9,8 @@ use esp_hal::delay::Delay;
 use esp_hal::{clock::CpuClock, main};
 use esp_start::com::uart;
 use esp_start::io::{ScreenOutPins, SdOutPins};
-use esp_start::screen::{ScreenController, ScreenDriver, DEFAULT_CONTRAST};
-use esp_start::sd::SdStorage;
+use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
+use esp_start::sd::{SdStorage, SdStorageError};
 use esp_start::spi_bus;
 
 #[panic_handler]
@@ -103,10 +103,13 @@ fn main() -> ! {
                 .unwrap();
                 ControlFlow::Continue(())
             }) {
-                writeln!(uart, "[SD] Root directory read failed: {error:?}").unwrap();
+                match error {
+                    SdStorageError::CardNotFound => writeln!(uart, "[SD] Card removed").unwrap(),
+                    error => writeln!(uart, "[SD] Root directory read failed: {error:?}").unwrap(),
+                }
             }
         }
-        Err(error) if error.is_card_not_found() => {
+        Err(SdStorageError::CardNotFound) => {
             uart.write_str("NOT FOUND\r\n").unwrap();
             screen.draw_text((0, 0), "Setup Complete\nSD not inserted", true, false);
         }

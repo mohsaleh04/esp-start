@@ -1,5 +1,5 @@
 use esp_hal::gpio::DriveMode;
-use esp_hal::ledc::timer::{config::Duty, LSClockSource};
+use esp_hal::ledc::timer::{LSClockSource, config::Duty};
 use esp_hal::time::Rate;
 
 pub struct PwmTimerConfig {

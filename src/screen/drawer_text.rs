@@ -4,7 +4,7 @@ use crate::screen::font::{
     ASCII_FONT_FIRST_INDEX, ASCII_FONT_LINE_SPACING,
 };
 use crate::screen::spi::ScreenSpi;
-use crate::screen::{ScreenController, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::screen::{SCREEN_HEIGHT, SCREEN_WIDTH, ScreenController};
 use core::fmt;
 use core::fmt::Write;
 

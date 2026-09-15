@@ -1,4 +1,4 @@
-use crate::sd::time::DummyTimeSource;
+use crate::sd::time::FixedTimeSource;
 use core::ops::ControlFlow;
 use embedded_hal::{delay::DelayNs, spi::SpiDevice};
 use embedded_sdmmc::{
@@ -10,22 +10,29 @@ where
     SPI: SpiDevice<u8>,
     DELAY: DelayNs,
 {
-    manager: VolumeManager<SdCard<SPI, DELAY>, DummyTimeSource>,
+    manager: VolumeManager<SdCard<SPI, DELAY>, FixedTimeSource>,
 }
 
 #[derive(Debug)]
 pub enum SdStorageError {
+    CardNotFound,
     Card(SdCardError),
     Filesystem(FilesystemError<SdCardError>),
 }
 
 impl SdStorageError {
-    pub fn is_card_not_found(&self) -> bool {
-        matches!(
-            self,
-            Self::Card(SdCardError::CardNotFound)
-                | Self::Filesystem(FilesystemError::DeviceError(SdCardError::CardNotFound))
-        )
+    fn from_card(error: SdCardError) -> Self {
+        match error {
+            SdCardError::CardNotFound => Self::CardNotFound,
+            error => Self::Card(error),
+        }
+    }
+
+    fn from_filesystem(error: FilesystemError<SdCardError>) -> Self {
+        match error {
+            FilesystemError::DeviceError(SdCardError::CardNotFound) => Self::CardNotFound,
+            error => Self::Filesystem(error),
+        }
     }
 }
 
@@ -34,7 +41,7 @@ where
     SPI: SpiDevice<u8>,
     DELAY: DelayNs,
 {
-    volume: Volume<'a, SdCard<SPI, DELAY>, DummyTimeSource, 4, 4, 1>,
+    volume: Volume<'a, SdCard<SPI, DELAY>, FixedTimeSource, 4, 4, 1>,
     size_bytes: u64,
 }
 
@@ -45,7 +52,7 @@ where
 {
     pub fn new(spi: SPI, delay: DELAY) -> Self {
         Self {
-            manager: VolumeManager::new(SdCard::new(spi, delay), DummyTimeSource),
+            manager: VolumeManager::new(SdCard::new(spi, delay), FixedTimeSource),
         }
     }
 
@@ -53,11 +60,11 @@ where
         let size_bytes = self
             .manager
             .device(|card| card.num_bytes())
-            .map_err(SdStorageError::Card)?;
+            .map_err(SdStorageError::from_card)?;
         let volume = self
             .manager
             .open_volume(VolumeIdx(0))
-            .map_err(SdStorageError::Filesystem)?;
+            .map_err(SdStorageError::from_filesystem)?;
 
         Ok(MountedSd { volume, size_bytes })
     }
@@ -72,11 +79,15 @@ where
         self.size_bytes
     }
 
-    pub fn for_each_root_entry<F>(&self, visitor: F) -> Result<(), FilesystemError<SdCardError>>
+    pub fn for_each_root_entry<F>(&self, visitor: F) -> Result<(), SdStorageError>
     where
         F: FnMut(&DirEntry) -> ControlFlow<()>,
     {
-        let root = self.volume.open_root_dir()?;
+        let root = self
+            .volume
+            .open_root_dir()
+            .map_err(SdStorageError::from_filesystem)?;
         root.iterate_dir(visitor)
+            .map_err(SdStorageError::from_filesystem)
     }
 }

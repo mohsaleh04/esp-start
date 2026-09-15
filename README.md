@@ -24,6 +24,21 @@ Nothing serious yet, just learning how things actually work under the hood. :)
 * 4 MB Flash
 * CP2102 USB-to-UART
 
+## Current wiring
+
+The source in `src/bin/main.rs` is authoritative for the current wiring:
+
+| Device signal | ESP32 pin |
+|---------------|-----------|
+| LCD BL        | GPIO22    |
+| LCD RST       | GPIO21    |
+| LCD DC        | GPIO17    |
+| LCD CS        | GPIO5     |
+| SPI SCK       | GPIO18    |
+| SPI MOSI      | GPIO23    |
+| SPI MISO      | GPIO19    |
+| SD CS         | GPIO16    |
+
 ## Build
 
 ```bash

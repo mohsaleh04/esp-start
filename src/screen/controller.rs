@@ -1,7 +1,7 @@
-use crate::screen::commands::{config, AddressingCommand, PositioningCommand, ScreenCommand};
+use crate::screen::commands::{AddressingCommand, PositioningCommand, ScreenCommand, config};
 use crate::screen::framebuffer::Framebuffer;
 use crate::screen::spi::ScreenSpi;
-use crate::screen::{ScreenDriver, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::screen::{SCREEN_HEIGHT, SCREEN_WIDTH, ScreenDriver};
 
 pub struct ScreenController<SPI: ScreenSpi> {
     driver: ScreenDriver<SPI>,

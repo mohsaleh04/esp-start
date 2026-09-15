@@ -1,6 +1,6 @@
+use esp_hal::Blocking;
 use esp_hal::peripherals::{GPIO1, GPIO3, UART0};
 use esp_hal::uart::{Config, Uart};
-use esp_hal::Blocking;
 
 pub fn setup(
     uart: UART0<'static>,

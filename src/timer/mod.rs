@@ -1,8 +1,8 @@
 use crate::timer::handler::timer_handler;
 use crate::timer::scheduler::schedule_timer;
 use core::sync::atomic::Ordering;
-use esp_hal::timer::timg::{TimerGroup, TimerGroupInstance};
 use esp_hal::timer::PeriodicTimer;
+use esp_hal::timer::timg::{TimerGroup, TimerGroupInstance};
 
 mod handler;
 mod scheduler;

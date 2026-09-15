@@ -1,4 +1,4 @@
-use crate::io::{interrupt, PinConfig};
+use crate::io::{PinConfig, interrupt};
 use esp_hal::gpio::{Input, InputPin};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

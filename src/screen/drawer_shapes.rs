@@ -1,5 +1,5 @@
 use crate::screen::spi::ScreenSpi;
-use crate::screen::{ScreenController, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::screen::{SCREEN_HEIGHT, SCREEN_WIDTH, ScreenController};
 
 enum Corner {
     TopLeft,

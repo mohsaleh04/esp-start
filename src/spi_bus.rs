@@ -1,10 +1,10 @@
 use core::cell::RefCell;
-use esp_hal::Blocking;
 use esp_hal::gpio::{InputPin as GpioInPin, OutputPin as GpioOutPin};
 use esp_hal::peripherals::SPI2;
-use esp_hal::spi::Mode;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
+use esp_hal::spi::Mode;
 use esp_hal::time::Rate;
+use esp_hal::Blocking;
 
 pub fn setup(
     spi_preph: SPI2<'static>,

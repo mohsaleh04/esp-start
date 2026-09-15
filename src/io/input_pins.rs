@@ -1,10 +1,25 @@
-use esp_hal::gpio::{Input, InputPin};
 use crate::io::{interrupt, PinConfig};
+use esp_hal::gpio::{Input, InputPin};
 
-pub fn setup_test_button(pin: impl InputPin + 'static) {
-    interrupt::init_test_button(Input::new(pin, PinConfig::PullUp.as_input()))
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ButtonId {
+    Primary,
 }
 
-pub fn test_button_pressed() -> bool {
-    interrupt::is_test_button_pressed()
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputEvent {
+    ButtonPressed(ButtonId),
+    ButtonReleased(ButtonId),
+}
+
+pub fn setup_primary_button(pin: impl InputPin + 'static) {
+    interrupt::init_primary_button(Input::new(pin, PinConfig::PullUp.as_input()))
+}
+
+pub fn next_input_event() -> Option<InputEvent> {
+    interrupt::next_event()
+}
+
+pub fn primary_button_is_pressed() -> bool {
+    interrupt::primary_button_is_pressed()
 }

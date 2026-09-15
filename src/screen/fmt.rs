@@ -2,7 +2,7 @@ use crate::screen::font::{
     ASCII_FONT_CHAR_HEIGHT, ASCII_FONT_CHAR_SPACING, ASCII_FONT_CHAR_WIDTH, ASCII_FONT_LINE_SPACING,
 };
 use crate::screen::spi::ScreenSpi;
-use crate::screen::{SCREEN_WIDTH, ScreenController};
+use crate::screen::{ScreenController, SCREEN_WIDTH};
 use core::fmt::{self, Write};
 
 pub(super) struct ScreenFmtWriter<'a, SPI: ScreenSpi> {
@@ -39,7 +39,8 @@ impl<'a, SPI: ScreenSpi> Write for ScreenFmtWriter<'a, SPI> {
             self.screen.draw_char(self.cursor, ch, self.inverse);
             self.cursor.0 += ASCII_FONT_CHAR_WIDTH as i16 + ASCII_FONT_CHAR_SPACING as i16;
 
-            if self.soft_wrap && self.cursor.0 + ASCII_FONT_CHAR_WIDTH as i16 >= SCREEN_WIDTH as i16 {
+            if self.soft_wrap && self.cursor.0 + ASCII_FONT_CHAR_WIDTH as i16 >= SCREEN_WIDTH as i16
+            {
                 self.cursor.0 = 0;
                 self.cursor.1 += ASCII_FONT_CHAR_HEIGHT as i16 + ASCII_FONT_LINE_SPACING as i16;
             }

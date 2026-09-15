@@ -1,5 +1,8 @@
 use esp_hal::delay::Delay;
-use esp_hal::ledc::{channel::{Channel, ChannelIFace}, LowSpeed};
+use esp_hal::ledc::{
+    channel::{Channel, ChannelIFace},
+    LowSpeed,
+};
 
 pub struct PwmController<'d> {
     channel: Channel<'d, LowSpeed>,

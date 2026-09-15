@@ -23,8 +23,8 @@ impl PwmTimerConfig {
     }
 }
 
-impl PwmChannelConfig {
-    pub fn default() -> Self {
+impl Default for PwmChannelConfig {
+    fn default() -> Self {
         Self {
             duty_percent: 0,
             drive_mode: DriveMode::PushPull,

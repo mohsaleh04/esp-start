@@ -1,5 +1,5 @@
-use crate::screen::{SCREEN_HEIGHT, SCREEN_WIDTH, ScreenController};
 use crate::screen::spi::ScreenSpi;
+use crate::screen::{ScreenController, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 enum Corner {
     TopLeft,
@@ -25,7 +25,7 @@ impl<SPI: ScreenSpi> ScreenController<SPI> {
 
         loop {
             if (x0 >= 0 && x0 < SCREEN_WIDTH as i16) && (y0 >= 0 && y0 < SCREEN_HEIGHT as i16) {
-                self.draw_px(x0, y0, false).unwrap();
+                self.draw_px(x0, y0, false);
             }
 
             if x0 == x1 && y0 == y1 {
@@ -131,10 +131,7 @@ impl<SPI: ScreenSpi> ScreenController<SPI> {
 
             for line_offset in 0..r {
                 // up corners
-                self.draw_line(
-                    (x + r, y + line_offset),
-                    (right - r, y + line_offset),
-                );
+                self.draw_line((x + r, y + line_offset), (right - r, y + line_offset));
                 // down corners
                 self.draw_line(
                     (x + r, bottom - line_offset),
@@ -255,8 +252,8 @@ impl<SPI: ScreenSpi> ScreenController<SPI> {
             self.draw_line(fill_from.0, corner);
             self.draw_line(fill_from.1, invert_corner);
         } else {
-            self.draw_px(corner.0, corner.1, false).unwrap();
-            self.draw_px(invert_corner.0, invert_corner.1, false).unwrap();
+            self.draw_px(corner.0, corner.1, false);
+            self.draw_px(invert_corner.0, invert_corner.1, false);
         }
     }
 

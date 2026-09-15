@@ -3,13 +3,14 @@ use esp_hal::gpio::Io;
 use esp_hal::peripherals::IO_MUX;
 
 mod input_pins;
+mod interrupt;
 mod output_pins;
 mod pins_config;
-mod interrupt;
 
-pub use output_pins::ScreenOutPins;
-pub use output_pins::ScreenPins;
-pub use output_pins::SdOutPins;
+pub use input_pins::{
+    next_input_event, primary_button_is_pressed, setup_primary_button, ButtonId, InputEvent,
+};
+pub use output_pins::{ScreenOutPins, ScreenPins, SdOutPins};
 pub use pins_config::PinConfig;
 
 pub fn setup(io_mux: IO_MUX<'static>) {

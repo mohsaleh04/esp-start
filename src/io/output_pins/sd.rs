@@ -5,9 +5,7 @@ pub struct SdOutPins {
 }
 
 impl SdOutPins {
-    pub fn new(
-        sd_cs: impl OutputPin + 'static,
-    ) -> Self {
+    pub fn new(sd_cs: impl OutputPin + 'static) -> Self {
         Self {
             cs: Output::new(sd_cs, Level::High, OutputConfig::default()),
         }

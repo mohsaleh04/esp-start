@@ -5,18 +5,19 @@ use core::fmt::Write;
 use core::ops::ControlFlow;
 use core::panic::PanicInfo;
 use embedded_hal_bus::spi::RefCellDevice;
-use embedded_sdmmc::{SdCard, VolumeIdx, VolumeManager};
 use esp_hal::delay::Delay;
 use esp_hal::{clock::CpuClock, main};
 use esp_start::com::uart;
 use esp_start::io::{ScreenOutPins, SdOutPins};
 use esp_start::screen::{ScreenController, ScreenDriver, DEFAULT_CONTRAST};
-use esp_start::sd::time::DummyTimeSource;
+use esp_start::sd::SdStorage;
 use esp_start::spi_bus;
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
-    loop {}
+    loop {
+        core::hint::spin_loop();
+    }
 }
 
 // Don't remove this
@@ -53,75 +54,74 @@ fn main() -> ! {
             screen_out_pins.screen,
         ),
     );
-    if let Err(e) = screen_res {
+    let mut screen = match screen_res {
+        Ok(screen) => screen,
+        Err(error) => {
+            uart.write_str("FAILED\r\n").unwrap();
+            writeln!(uart, "--> Error: {error:#?}").unwrap();
+            loop {
+                core::hint::spin_loop();
+            }
+        }
+    };
+    screen.clear();
+    if let Err(error) = screen.flush() {
         uart.write_str("FAILED\r\n").unwrap();
-        write!(uart, "--> Error: ${:#?}", e).unwrap();
-        loop {}
-    }
-    let mut screen = screen_res.unwrap();
-    if screen.clear().is_err() {
-        uart.write_str("FAILED\r\n").unwrap();
-        write!(uart, "--> Error: Failed to clear screen").unwrap();
-        loop {}
+        writeln!(uart, "--> Error: {error:#?}").unwrap();
+        loop {
+            core::hint::spin_loop();
+        }
     }
     screen.toggle_backlight();
     uart.write_str("SUCCESS\r\n").unwrap();
 
     // --- SD Card ---
-    uart.write_str("[SD] Initializing ... ").unwrap();
-    let sd_out_pins = SdOutPins::new(
-        peripherals.GPIO16, // cs
-    );
+    uart.write_str("[SD] Mounting ... ").unwrap();
+    let sd_out_pins = SdOutPins::new(peripherals.GPIO16); // cs
     let sd_spi = RefCellDevice::new(&spi_bus, sd_out_pins.cs, Delay::new()).unwrap();
-    let sd = SdCard::new(sd_spi, Delay::new());
+    let storage = SdStorage::new(sd_spi, Delay::new());
 
-    match sd.num_bytes() {
-        Ok(size) => {
+    match storage.mount() {
+        Ok(sd) => {
             uart.write_str("SUCCESS\r\n").unwrap();
-            writeln!(uart, "[SD] Size: {} MB", size / 1048576).unwrap();
+            let size_mb = sd.size_bytes() / 1_048_576;
+            writeln!(uart, "[SD] Size: {size_mb} MB").unwrap();
 
             screen.draw_fmt(
                 (0, 0),
-                format_args!("Setup Complete\nSD Size: {} MB", size / 1048576),
+                format_args!("Setup Complete\nSD Size: {size_mb} MB"),
                 true,
                 false,
             );
+
+            if let Err(error) = sd.for_each_root_entry(|entry| {
+                writeln!(
+                    uart,
+                    "{} {:?} {} bytes",
+                    entry.name, entry.attributes, entry.size
+                )
+                .unwrap();
+                ControlFlow::Continue(())
+            }) {
+                writeln!(uart, "[SD] Root directory read failed: {error:?}").unwrap();
+            }
         }
-        Err(embedded_sdmmc::SdCardError::CardNotFound) => {
+        Err(error) if error.is_card_not_found() => {
+            uart.write_str("NOT FOUND\r\n").unwrap();
             screen.draw_text((0, 0), "Setup Complete\nSD not inserted", true, false);
-            loop {}
         }
-        Err(err) => {
+        Err(error) => {
             uart.write_str("FAILED\r\n").unwrap();
-            writeln!(uart, "--> Error: {:?}", err).unwrap();
-            loop {}
+            writeln!(uart, "--> Error: {error:?}").unwrap();
+            screen.draw_text((0, 0), "Setup Complete\nSD mount failed", true, false);
         }
     }
 
-    let volume_manager = VolumeManager::new(sd, DummyTimeSource);
-    match volume_manager.open_volume(VolumeIdx(0)) {
-        Ok(volume) => {
-            writeln!(uart, "Volume opened successfully").unwrap();
-
-            let root_dir = volume.open_root_dir().expect("failed to open dir");
-
-            root_dir
-                .iterate_dir(|entry| {
-                    writeln!(
-                        uart,
-                        "{} {:?} {} bytes",
-                        entry.name, entry.attributes, entry.size
-                    )
-                    .unwrap();
-                    ControlFlow::Continue(())
-                })
-                .expect("error in read dir");
-        }
-
-        Err(err) => {
-            writeln!(uart, "Open volume failed: {:?}", err).unwrap();
-        }
+    if let Err(error) = screen.flush() {
+        writeln!(uart, "[LCD] Flush failed: {error:#?}").unwrap();
     }
 
-    loop {}
+    loop {
+        core::hint::spin_loop();
+    }
 }

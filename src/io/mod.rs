@@ -8,7 +8,8 @@ mod output_pins;
 mod pins_config;
 
 pub use input_pins::{
-    ButtonId, InputEvent, next_input_event, primary_button_is_pressed, setup_primary_button,
+    ButtonId, InputEvent, PRIMARY_BUTTON_DEBOUNCE_MS, next_input_event, primary_button_is_pressed,
+    setup_primary_button,
 };
 pub use output_pins::{ScreenOutPins, ScreenPins, SdOutPins};
 pub use pins_config::PinConfig;

@@ -16,6 +16,10 @@ Currently playing with:
 
 Nothing serious yet, just learning how things actually work under the hood. :)
 
+[Read my repo doc](DOC.md).
+
+---
+
 ## Hardware
 
 * ESP32-DevKitC
@@ -38,6 +42,7 @@ The source in `src/bin/main.rs` is authoritative for the current wiring:
 | SPI MOSI      | GPIO23    |
 | SPI MISO      | GPIO19    |
 | SD CS         | GPIO16    |
+| Primary button | GPIO32 (active-low, internal pull-up) |
 
 ## Build
 

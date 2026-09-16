@@ -1,6 +1,8 @@
 use crate::io::{PinConfig, interrupt};
 use esp_hal::gpio::{Input, InputPin};
 
+pub const PRIMARY_BUTTON_DEBOUNCE_MS: u64 = 25;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ButtonId {
     Primary,

@@ -6,14 +6,15 @@
 
 | سیگنال | GPIO |
 |--------|------|
-| LCD BL | 22 |
-| LCD RST | 21 |
-| LCD DC | 17 |
-| LCD CS | 5 |
-| SPI SCK | 18 |
-| SPI MOSI | 23 |
-| SPI MISO | 19 |
-| SD CS | 16 |
+| LCD BL | 22   |
+| LCD RST | 21   |
+| LCD DC | 17   |
+| LCD CS | 5    |
+| SPI SCK | 18   |
+| SPI MOSI | 23   |
+| SPI MISO | 19   |
+| SD CS | 16   |
+| دکمهٔ اصلی (active-low) | 32   |
 
 برای کارهای عمومی، من فعلاً این گروه‌بندی رو تو ذهنت نگه می‌داشتم:
 
@@ -42,7 +43,7 @@ Espressif رسماً GPIOهای `0,2,5,12,15` رو strapping معرفی می‌�
 **این ده‌تا رو منطقه‌ی امن خودت در نظر بگیر.**
 
 و چون الان داریم HAL استفاده می‌کنیم، بعد از اینکه LED روشن شد یه آزمایش خیلی جذاب‌تر هم داریم: یک بار `Output::new()` و
-`set_high()` رو کنار بذاریم و **مستقیماً رجیستر MMIO مربوط به GPIO25 رو با Rust بنویسیم**. اونجا دقیقاً می‌بینی HAL پشت
+`set_high()` رو کنار بذاریم و **مستقیماً رجیستر MMIO مربوط به GPIO26 رو با Rust بنویسیم**. اونجا دقیقاً می‌بینی HAL پشت
 پرده چه کاری با سخت‌افزار انجام می‌ده.
 
 [1]: https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32/esp32-devkitc/user_guide.html?utm_source=chatgpt.com "ESP32-DevKitC V4 - ESP32 - — esp-dev-kits latest documentation"

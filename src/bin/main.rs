@@ -8,7 +8,7 @@ use embedded_hal_bus::spi::RefCellDevice;
 use esp_hal::delay::Delay;
 use esp_hal::{clock::CpuClock, main};
 use esp_start::com::uart;
-use esp_start::io::{ScreenOutPins, SdOutPins};
+use esp_start::io::{self, ButtonId, InputEvent, ScreenOutPins, SdOutPins};
 use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
 use esp_start::sd::{SdStorage, SdStorageError};
 use esp_start::spi_bus;
@@ -29,6 +29,10 @@ fn main() -> ! {
     let peripherals = esp_hal::init(config);
 
     let mut uart = uart::setup(peripherals.UART0, peripherals.GPIO1, peripherals.GPIO3);
+
+    io::setup(peripherals.IO_MUX);
+    io::setup_primary_button(peripherals.GPIO32);
+    uart.write_str("[INPUT] Primary button ready on GPIO32\r\n").unwrap();
     uart.write_str("\r\n").unwrap();
 
     let spi_bus = spi_bus::setup(
@@ -125,6 +129,20 @@ fn main() -> ! {
     }
 
     loop {
+        while let Some(event) = io::next_input_event() {
+            match event {
+                InputEvent::ButtonPressed(ButtonId::Primary) => {
+                    uart.write_str("[INPUT] Primary button pressed\r\n")
+                        .unwrap();
+                    screen.toggle_backlight();
+                }
+                InputEvent::ButtonReleased(ButtonId::Primary) => {
+                    uart.write_str("[INPUT] Primary button released\r\n")
+                        .unwrap();
+                }
+            }
+        }
+
         core::hint::spin_loop();
     }
 }

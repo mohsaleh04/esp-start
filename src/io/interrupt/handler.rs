@@ -7,7 +7,7 @@ fn primary_button_handler() {
         let mut button = PRIMARY_BUTTON.borrow_ref_mut(cs);
         if let Some(button) = button.as_mut() {
             button.clear_interrupt();
-            states::record_primary_button_state(cs, button.is_low());
+            states::record_primary_button_edge(cs, button.is_low());
         }
     });
 }

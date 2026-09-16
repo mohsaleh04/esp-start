@@ -23,11 +23,11 @@ use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
 use esp_start::sd::{SdStorage, SdStorageError};
 use esp_start::{pcnt, runtime, spi_bus, timer};
 
-const WIFI_SSID: &str = "HomeADSL";
-const WIFI_PASSWORD: &str = "Home#1405";
-const SERVER_IP_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::new(192, 168, 1, 101), 80);
+const WIFI_SSID: Option<&str> = option_env!("ESP_START_WIFI_SSID");
+const WIFI_PASSWORD: Option<&str> = option_env!("ESP_START_WIFI_PASSWORD");
+const SERVER_ADDR_IPPORT: (Ipv4Addr, u16) = (Ipv4Addr::new(192, 168, 1, 200), 80);
 const HTTP_REQUEST: &[u8] = b"GET /gpio/1 HTTP/1.1\r\n\
-    Host: 192.168.1.101\r\n\
+    Host: 192.168.1.200\r\n\
     Connection: close\r\n\
     \r\n";
 
@@ -162,20 +162,21 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     // --- Wi-Fi and HTTP ---
-    let wifi_network = WifiNetwork::connect(
-        peripherals.WIFI,
-        spawner,
-        WIFI_SSID,
-        Some(WIFI_PASSWORD),
-        &mut uart,
-    )
-    .await;
+    let wifi_network = match WIFI_SSID {
+        Some(ssid) => {
+            WifiNetwork::connect(peripherals.WIFI, spawner, ssid, WIFI_PASSWORD, &mut uart).await
+        }
+        None => {
+            uart.write_str("[WIFI] Skipped: ESP_START_WIFI_SSID is not set\r\n")
+                .unwrap();
+            None
+        }
+    };
     let mut http_client = match wifi_network.as_ref() {
         Some(network) => Some(
             HttpClient::connect_and_send(
                 network.stack(),
-                SERVER_IP_ADDR.0,
-                SERVER_IP_ADDR.1,
+                SERVER_ADDR_IPPORT,
                 HTTP_REQUEST,
                 &mut uart,
             )

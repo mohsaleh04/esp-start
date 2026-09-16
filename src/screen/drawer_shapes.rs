@@ -42,29 +42,6 @@ impl<SPI: ScreenSpi> ScreenController<SPI> {
                 y0 += dir_y;
             }
         }
-
-        // DDA Algorithm
-        /*let dx = x2 as i16 - x0;
-        let dy = y2 as i16 - x0;
-        let steps = dx.abs().max(dy.abs());
-
-        if steps == 0 {
-            self.draw_px(x1, y1, false);
-            return;
-        }
-
-        let x_step = dx as f32 / steps as f32;
-        let y_step = dy as f32 / steps as f32;
-
-        let mut x = x1 as f32;
-        let mut y = y1 as f32;
-
-        for _ in 0..=steps {
-            self.draw_px(math::round(x) as i16, math::round(y) as i16, false);
-
-            x += x_step;
-            y += y_step;
-        }*/
     }
 
     // ################

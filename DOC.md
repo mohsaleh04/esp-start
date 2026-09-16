@@ -27,8 +27,9 @@ UI، فایل‌منیجر و برنامه‌های کوچک
 - یک دکمهٔ interrupt-based با debounce
 - UART برای log
 - abstraction اولیهٔ PWM و timer
+- اتصال Wi-Fi، DHCP و یک HTTP client آزمایشی
 
-شبکه و Wi-Fi جزو سابقه و هدف پروژه هستند، اما در ساختار فعلی `src/` ماژول فعال شبکه وجود ندارد.
+ماژول‌های فعال `src/wifi/` و `src/net/` اتصال station، پیکربندی DHCP، TCP و polling پاسخ HTTP را پیاده‌سازی می‌کنند.
 
 ## ۲. سخت‌افزار و سیم‌کشی فعلی
 
@@ -81,7 +82,7 @@ GPIO32 نور پس‌زمینهٔ LCD را toggle می‌کند. GPIO27 حالت
 9. PCNT روی GPIO33 آماده می‌شود.
 10. برنامه وارد event loop می‌شود و ورودی، LED، PCNT و شبکه را پیش می‌برد.
 
-نبودن SD یک خطای fatal نیست. سیستم پیام مناسب نشان می‌دهد و همچنان وارد event loop می‌شود.
+نبودن SD یک خطای fatal نیست. سیستم پیام مناسب نشان می‌دهد و همچنان وارد event loop می‌شود. شبکه نیز optional است: نبودن تنظیمات، شکست اتصال Wi-Fi یا timeout در DHCP مانع ورود سیستم به event loop نمی‌شود.
 
 ## ۴. چرا LCD و SD یک SPI مشترک دارند؟
 
@@ -177,7 +178,7 @@ screen.flush()?;
 
 ### الگوریتم‌های رسم
 
-خط‌ها با الگوریتم Bresenham رسم می‌شوند. این الگوریتم فقط از اعداد صحیح استفاده می‌کند و برای نمایشگر embedded مناسب است.
+خط‌ها با الگوریتم Bresenham رسم می‌شوند. این الگوریتم فقط از اعداد صحیح استفاده می‌کند و برای نمایشگر embedded مناسب است. پیاده‌سازی اولیهٔ DDA برای مقایسهٔ آموزشی نوشته شده بود، اما چون به محاسبات floating-point نیاز داشت از مسیر اجرایی و سورس حذف شد؛ این تاریخچه دلیل انتخاب Bresenham را توضیح می‌دهد.
 
 دایره و گوشه‌های گرد با الگوریتم midpoint و تقارن چندجهته ساخته می‌شوند. filled shapeها نیز با رسم خط‌های داخلی پر می‌شوند.
 
@@ -232,6 +233,8 @@ match storage.mount() {
 ```
 
 `MountedSd` یک handle از نوع RAII است. تا وقتی این مقدار زنده است volume باز می‌ماند و هنگام drop شدن بسته می‌شود.
+
+در boot فعلی این handle فقط داخل شاخهٔ موفق `match storage.mount()` زنده می‌ماند، root را فهرست می‌کند و سپس drop می‌شود. این رفتار برای demo فعلی درست است؛ file manager باید مالکیت `MountedSd` را به state طولانی‌عمر برنامه منتقل کند تا volume در سراسر event loop mount بماند.
 
 ### خطاهای SD
 
@@ -371,7 +374,19 @@ UART0 با GPIO1 و GPIO3 ساخته می‌شود. در boot، نتیجهٔ ini
 
 UART در این پروژه ابزار اصلی مشاهدهٔ رفتار داخلی است. روی نمایشگر فقط پیام‌های مناسب کاربر نمایش داده می‌شود؛ جزئیات فنی خطا معمولاً روی UART قرار می‌گیرند.
 
-## ۱۳. نقشهٔ فایل‌ها
+## ۱۳. شبکه و تنظیمات محلی
+
+SSID و رمز Wi-Fi در repository نگهداری نمی‌شوند. آن‌ها هنگام build از environment خوانده می‌شوند:
+
+```bash
+ESP_START_WIFI_SSID='your-ssid' ESP_START_WIFI_PASSWORD='your-password' cargo build
+```
+
+اگر `ESP_START_WIFI_SSID` تنظیم نشده باشد، boot شبکه را رد می‌کند و سیستم offline ادامه می‌دهد. اتصال Wi-Fi، دریافت DHCP و اتصال TCP timeout صریح دارند. HTTP client پس از قطع اتصال با فاصلهٔ زمانی محدود دوباره تلاش می‌کند.
+
+bufferهای RX/TX فعلاً `StaticCell`های singleton هستند؛ بنابراین پیاده‌سازی کنونی عمداً تنها یک TCP socket می‌سازد. قبل از پشتیبانی از چند network application باید pool یا مالکیت جداگانهٔ bufferها طراحی شود. HTTP parser کامل، TLS و مدیریت چند request هنوز پیاده‌سازی نشده‌اند.
+
+## ۱۴. نقشهٔ فایل‌ها
 
 | مسیر | مسئولیت |
 |---|---|
@@ -388,7 +403,7 @@ UART در این پروژه ابزار اصلی مشاهدهٔ رفتار داخ
 | `src/utils.rs` | delay سادهٔ busy-wait |
 | `src/lib.rs` | export ماژول‌های کتابخانه |
 
-## ۱۴. build و اجرا
+## ۱۵. build و اجرا
 
 بررسی قالب‌بندی:
 
@@ -420,7 +435,7 @@ cargo build
 espflash flash --monitor target/xtensa-esp32-none-elf/debug/esp-start
 ```
 
-## ۱۵. اصول ادامهٔ توسعه
+## ۱۶. اصول ادامهٔ توسعه
 
 هنگام تغییر پروژه این قواعد مفیدند:
 
@@ -433,7 +448,7 @@ espflash flash --monitor target/xtensa-esp32-none-elf/debug/esp-start
 7. قبل از استفاده از مثال‌های اینترنتی، نسخه‌های واقعی `Cargo.toml` و `Cargo.lock` را بررسی کن.
 8. بعد از هر تغییر `fmt`، `check` و `clippy` را اجرا کن.
 
-## ۱۶. محدودیت‌ها و قدم‌های بعدی
+## ۱۷. محدودیت‌ها و قدم‌های بعدی
 
 مواردی که هنوز عمداً ساده هستند:
 
@@ -444,6 +459,8 @@ espflash flash --monitor target/xtensa-esp32-none-elf/debug/esp-start
 - main loop هنوز sleep یا power management ندارد.
 - UI manager و routing رویداد میان applicationها ساخته نشده است.
 - keyboard نهایی هنوز انتخاب نشده است.
+- شبکه فعلاً یک TCP socket با bufferهای singleton دارد و HTTP client هنوز parser کامل یا TLS ندارد.
+- `MountedSd` در boot پس از root listing drop می‌شود و file manager باید آن را در state برنامه نگه دارد.
 
 قدم‌های منطقی آینده:
 

@@ -10,7 +10,7 @@ use core::fmt::Write;
 use embassy_executor::Spawner;
 use embassy_net::driver::Driver;
 use embassy_net::{Config, Runner, Stack, StackResources};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Timer, with_timeout};
 use esp_hal::Blocking;
 use esp_hal::peripherals::WIFI;
 use esp_hal::uart::Uart;
@@ -18,6 +18,8 @@ use esp_radio::wifi::WifiController;
 use static_cell::StaticCell;
 
 const SOCKET_COUNT: usize = 3;
+const WIFI_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+const DHCP_TIMEOUT: Duration = Duration::from_secs(15);
 
 static RESOURCES: StaticCell<StackResources<SOCKET_COUNT>> = StaticCell::new();
 
@@ -52,11 +54,21 @@ impl WifiNetwork {
         uart.write_str("SUCCESS\r\n[WIFI] Connecting ...\r\n")
             .unwrap();
 
-        if !wifi::connection::connect(&mut controller, uart).await {
-            return None;
+        match with_timeout(
+            WIFI_CONNECT_TIMEOUT,
+            wifi::connection::connect(&mut controller, uart),
+        ).await {
+            Ok(true) => {}
+            Ok(false) => return None,
+            Err(_) => {
+                uart.write_str("[WIFI] Connection timed out\r\n").unwrap();
+                return None;
+            }
         }
 
-        wait_for_config_up(stack, uart).await;
+        if !wait_for_config_up(stack, uart).await {
+            return None;
+        }
         uart.write_str("[NET] Network is up\r\n").unwrap();
         if let Some(config) = stack.config_v4() {
             writeln!(uart, "[NET] IPv4 config: {config:?}").unwrap();
@@ -84,9 +96,20 @@ where
     embassy_net::new(driver, net_config, resources, seed)
 }
 
-async fn wait_for_config_up(stack: Stack<'static>, uart: &mut Uart<'static, Blocking>) {
-    while !stack.is_config_up() {
-        uart.write_str("[NET] Waiting for DHCP ...\r\n").unwrap();
-        Timer::after(Duration::from_millis(500)).await;
+async fn wait_for_config_up(stack: Stack<'static>, uart: &mut Uart<'static, Blocking>) -> bool {
+    let wait = async {
+        while !stack.is_config_up() {
+            uart.write_str("[NET] Waiting for DHCP ...\r\n").unwrap();
+            Timer::after(Duration::from_millis(500)).await;
+        }
+    };
+
+    match with_timeout(DHCP_TIMEOUT, wait).await {
+        Ok(()) => true,
+        Err(_) => {
+            uart.write_str("[NET] DHCP timed out; continuing offline\r\n")
+                .unwrap();
+            false
+        }
     }
 }

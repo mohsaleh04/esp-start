@@ -52,12 +52,20 @@ jobs:
           cargo --version
           espflash --version
 
-      - name: Run Checks
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run checks
         run: |
           source "$HOME/export-esp.sh"
           cargo check
 
-      - name: Try Build
+      - name: Run Clippy
+        run: |
+          source "$HOME/export-esp.sh"
+          cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build
         run: |
           source "$HOME/export-esp.sh"
           cargo build

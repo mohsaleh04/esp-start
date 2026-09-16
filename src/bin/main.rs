@@ -61,7 +61,7 @@ async fn main(spawner: Spawner) -> ! {
 
     let timer_group = TimerGroup::new(peripherals.TIMG0);
     timer::setup(timer_group.timer0, UPDATE_INTERVAL_MS);
-    runtime::setup_scheduler(peripherals.SW_INTERRUPT, timer_group.timer1);
+    runtime::setup_scheduler(peripherals.FROM_CPU_INTR0, timer_group.timer1);
 
     // GPIO25 blinks. GPIO26 and GPIO14 are the complementary PWM fade pair.
     let mut leds = LedController::new(

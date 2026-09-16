@@ -35,10 +35,19 @@ impl WifiNetwork {
         uart: &mut Uart<'static, Blocking>,
     ) -> Option<Self> {
         uart.write_str("[WIFI] Initializing ... ").unwrap();
-        let (mut controller, interfaces) = wifi::setup(wifi_peripheral);
-        wifi::config::set_station_config(&mut controller, ssid, password);
+        let (mut controller, station) = match wifi::setup(wifi_peripheral) {
+            Ok(wifi) => wifi,
+            Err(error) => {
+                writeln!(uart, "FAILED: {error:?}").unwrap();
+                return None;
+            }
+        };
+        if let Err(error) = wifi::config::set_station_config(&mut controller, ssid, password) {
+            writeln!(uart, "FAILED: invalid station config: {error:?}").unwrap();
+            return None;
+        }
 
-        let (stack, runner) = setup(interfaces.station);
+        let (stack, runner) = setup(station);
         runner::run_wifi_net_task(spawner, runner);
         uart.write_str("SUCCESS\r\n[WIFI] Connecting ...\r\n")
             .unwrap();

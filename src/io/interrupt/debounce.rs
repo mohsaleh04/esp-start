@@ -1,4 +1,4 @@
-use crate::io::{ButtonId, InputEvent, PRIMARY_BUTTON_DEBOUNCE_MS};
+use crate::io::{BUTTON_DEBOUNCE_MS, ButtonId, InputEvent};
 use esp_hal::time::{Duration, Instant};
 
 pub(super) struct ButtonDebounce {
@@ -31,8 +31,8 @@ impl ButtonDebounce {
         self.last_edge = Instant::now();
     }
 
-    pub(super) fn take_event(&mut self) -> Option<InputEvent> {
-        let debounce_time = Duration::from_millis(PRIMARY_BUTTON_DEBOUNCE_MS);
+    pub(super) fn take_event(&mut self, button_id: ButtonId) -> Option<InputEvent> {
+        let debounce_time = Duration::from_millis(BUTTON_DEBOUNCE_MS);
         if !self.pending || self.last_edge.elapsed() < debounce_time {
             return None;
         }
@@ -44,9 +44,9 @@ impl ButtonDebounce {
 
         self.stable_pressed = self.pending_pressed;
         Some(if self.stable_pressed {
-            InputEvent::ButtonPressed(ButtonId::Primary)
+            InputEvent::ButtonPressed(button_id)
         } else {
-            InputEvent::ButtonReleased(ButtonId::Primary)
+            InputEvent::ButtonReleased(button_id)
         })
     }
 }

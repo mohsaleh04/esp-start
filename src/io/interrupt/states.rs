@@ -46,45 +46,97 @@ impl EventQueue {
     }
 }
 
-pub(super) static PRIMARY_BUTTON: Mutex<RefCell<Option<Input<'static>>>> =
-    Mutex::new(RefCell::new(None));
-static PRIMARY_BUTTON_PRESSED: AtomicBool = AtomicBool::new(false);
-static PRIMARY_BUTTON_DEBOUNCE: Mutex<RefCell<ButtonDebounce>> =
-    Mutex::new(RefCell::new(ButtonDebounce::new()));
+struct ButtonState {
+    button_id: ButtonId,
+    input: Mutex<RefCell<Option<Input<'static>>>>,
+    pressed: AtomicBool,
+    debounce: Mutex<RefCell<ButtonDebounce>>,
+}
+
+impl ButtonState {
+    const fn new(button_id: ButtonId) -> Self {
+        Self {
+            button_id,
+            input: Mutex::new(RefCell::new(None)),
+            pressed: AtomicBool::new(false),
+            debounce: Mutex::new(RefCell::new(ButtonDebounce::new())),
+        }
+    }
+
+    fn init(&self, cs: CriticalSection<'_>, mut input: Input<'static>) {
+        let pressed = input.is_low();
+        self.pressed.store(pressed, Ordering::Relaxed);
+        self.debounce.borrow_ref_mut(cs).configure(pressed);
+        input.listen(Event::AnyEdge);
+        self.input.borrow_ref_mut(cs).replace(input);
+    }
+
+    fn handle_interrupt(&self, cs: CriticalSection<'_>) {
+        let mut input = self.input.borrow_ref_mut(cs);
+        let Some(input) = input.as_mut() else {
+            return;
+        };
+        if !input.is_interrupt_set() {
+            return;
+        }
+
+        let pressed = input.is_low();
+        input.clear_interrupt();
+        self.debounce.borrow_ref_mut(cs).record_edge(pressed);
+    }
+
+    fn take_event(&self, cs: CriticalSection<'_>) -> Option<InputEvent> {
+        let event = self.debounce.borrow_ref_mut(cs).take_event(self.button_id);
+        if let Some(event) = event {
+            self.pressed.store(
+                matches!(event, InputEvent::ButtonPressed(_)),
+                Ordering::Relaxed,
+            );
+        }
+        event
+    }
+
+    fn is_pressed(&self) -> bool {
+        self.pressed.load(Ordering::Relaxed)
+    }
+}
+
+static BACKLIGHT_BUTTON: ButtonState = ButtonState::new(ButtonId::Backlight);
+static LED_MODE_BUTTON: ButtonState = ButtonState::new(ButtonId::LedMode);
 static EVENT_QUEUE: Mutex<RefCell<EventQueue>> = Mutex::new(RefCell::new(EventQueue::new()));
 
-pub(super) fn primary_button_is_pressed() -> bool {
-    process_debounce();
-    PRIMARY_BUTTON_PRESSED.load(Ordering::Relaxed)
+fn button(button_id: ButtonId) -> &'static ButtonState {
+    match button_id {
+        ButtonId::Backlight => &BACKLIGHT_BUTTON,
+        ButtonId::LedMode => &LED_MODE_BUTTON,
+    }
 }
 
 fn process_debounce() {
     critical_section::with(|cs| {
-        let event = PRIMARY_BUTTON_DEBOUNCE.borrow_ref_mut(cs).take_event();
-        if let Some(event) = event {
-            let pressed = matches!(event, InputEvent::ButtonPressed(ButtonId::Primary));
-            PRIMARY_BUTTON_PRESSED.store(pressed, Ordering::Relaxed);
-            EVENT_QUEUE.borrow_ref_mut(cs).push(event);
+        let mut queue = EVENT_QUEUE.borrow_ref_mut(cs);
+        for button in [&BACKLIGHT_BUTTON, &LED_MODE_BUTTON] {
+            if let Some(event) = button.take_event(cs) {
+                queue.push(event);
+            }
         }
     });
 }
 
-pub(super) fn record_primary_button_edge(cs: CriticalSection<'_>, pressed: bool) {
-    PRIMARY_BUTTON_DEBOUNCE
-        .borrow_ref_mut(cs)
-        .record_edge(pressed);
+pub(super) fn init_button(button_id: ButtonId, input: Input<'static>) {
+    critical_section::with(|cs| button(button_id).init(cs, input));
 }
 
-pub(super) fn init_primary_button(mut button: Input<'static>) {
+pub(super) fn handle_gpio_interrupts() {
     critical_section::with(|cs| {
-        let pressed = button.is_low();
-        PRIMARY_BUTTON_PRESSED.store(pressed, Ordering::Relaxed);
-        PRIMARY_BUTTON_DEBOUNCE
-            .borrow_ref_mut(cs)
-            .configure(pressed);
-        button.listen(Event::AnyEdge);
-        PRIMARY_BUTTON.borrow_ref_mut(cs).replace(button);
+        BACKLIGHT_BUTTON.handle_interrupt(cs);
+        LED_MODE_BUTTON.handle_interrupt(cs);
     });
+}
+
+pub(super) fn button_is_pressed(button_id: ButtonId) -> bool {
+    process_debounce();
+    button(button_id).is_pressed()
 }
 
 pub(super) fn next_event() -> Option<InputEvent> {

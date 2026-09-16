@@ -48,10 +48,6 @@ enum LedMode {
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
-    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    let peripherals = esp_hal::init(config);
-    let mut uart = uart::setup(peripherals.UART0, peripherals.GPIO1, peripherals.GPIO3);
-    uart.write_str("PANIIIIIIC!!!!\r\n\r\n").expect("failed uart panic!");
     loop {}
 }
 

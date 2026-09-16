@@ -43,6 +43,10 @@ The source in `src/bin/main.rs` is authoritative for the current wiring:
 | SPI MISO      | GPIO19    |
 | SD CS         | GPIO16    |
 | Primary button | GPIO32 (active-low, internal pull-up) |
+| Blink LED | GPIO25 |
+| PWM fade LED A | GPIO26 |
+| PWM fade LED B | GPIO27 |
+| PCNT input | GPIO33 (internal pull-up) |
 
 ## Build
 

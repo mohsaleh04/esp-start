@@ -45,6 +45,10 @@ UI، فایل‌منیجر و برنامه‌های کوچک
 | SPI MISO |      GPIO19 | داده از SD به ESP32 |
 | SD CS |      GPIO16 | chip select کارت SD |
 | دکمهٔ اصلی |      GPIO32 | active-low با pull-up داخلی |
+| LED چشمک‌زن |      GPIO25 | خروجی دیجیتال |
+| LED محوشونده A |      GPIO26 | کانال PWM اول |
+| LED محوشونده B |      GPIO27 | کانال PWM دوم، مکمل کانال اول |
+| ورودی شمارندهٔ پالس |      GPIO33 | PCNT با pull-up داخلی |
 | UART TX |       GPIO1 | خروجی serial |
 | UART RX |       GPIO3 | ورودی serial |
 

@@ -2,7 +2,7 @@ use crate::timer::handler::timer_handler;
 use crate::timer::scheduler::schedule_timer;
 use core::sync::atomic::Ordering;
 use esp_hal::timer::PeriodicTimer;
-use esp_hal::timer::timg::{Timer};
+use esp_hal::timer::timg::Timer;
 
 mod handler;
 mod scheduler;

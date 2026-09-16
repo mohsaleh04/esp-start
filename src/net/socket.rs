@@ -12,10 +12,11 @@ pub fn new(stack: Stack<'static>) -> TcpSocket<'static> {
     TcpSocket::new(stack, rx_buff, tx_buff)
 }
 
-pub async fn connect_tcp(socket: &mut TcpSocket<'static>, server_ip: IpAddress, server_port: u16) {
+pub async fn connect_tcp(
+    socket: &mut TcpSocket<'static>,
+    server_ip: IpAddress,
+    server_port: u16,
+) -> Result<(), embassy_net::tcp::ConnectError> {
     let server_endpoint = IpEndpoint::new(server_ip, server_port);
-    socket
-        .connect(server_endpoint)
-        .await
-        .expect("Didn't expect connection TCP failed")
+    socket.connect(server_endpoint).await
 }

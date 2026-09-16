@@ -1,6 +1,6 @@
 pub mod config;
-pub mod scanner;
 pub mod connection;
+pub mod scanner;
 
 use esp_hal::peripherals::WIFI;
 

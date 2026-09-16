@@ -1,3 +1,4 @@
+use crate::screen::spi::ScreenSpi;
 use crate::screen::{SCREEN_HEIGHT, SCREEN_WIDTH, ScreenController};
 
 enum Corner {
@@ -8,7 +9,7 @@ enum Corner {
     All,
 }
 
-impl ScreenController {
+impl<SPI: ScreenSpi> ScreenController<SPI> {
     pub fn draw_line(&mut self, start: (i16, i16), end: (i16, i16)) {
         let mut x0 = start.0;
         let mut y0 = start.1;
@@ -23,7 +24,7 @@ impl ScreenController {
         let mut error = dx + dy;
 
         loop {
-            if x0 >= 0 && x0 < SCREEN_WIDTH as i16 && y0 >= 0 && y0 < SCREEN_HEIGHT as i16 {
+            if (x0 >= 0 && x0 < SCREEN_WIDTH as i16) && (y0 >= 0 && y0 < SCREEN_HEIGHT as i16) {
                 self.draw_px(x0, y0, false);
             }
 
@@ -130,10 +131,7 @@ impl ScreenController {
 
             for line_offset in 0..r {
                 // up corners
-                self.draw_line(
-                    (x + r, y + line_offset),
-                    (right - r, y + line_offset),
-                );
+                self.draw_line((x + r, y + line_offset), (right - r, y + line_offset));
                 // down corners
                 self.draw_line(
                     (x + r, bottom - line_offset),

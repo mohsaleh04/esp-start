@@ -20,6 +20,8 @@ esp-radio = { version = "1.0.0-beta.0", features = ["esp32", "wifi", "esp-alloc"
 esp-rtos = { version = "0.3", features = ["esp32", "esp-radio", "esp-alloc"] }
 esp-alloc = { version = "0.10", features = ["esp32"] }
 embedded-hal = "1.0.0"
+embedded-hal-bus = "0.3"
+embedded-sdmmc = "0.10"
 
 esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32"] }
 

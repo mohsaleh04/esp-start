@@ -4,6 +4,26 @@
 use core::fmt::Write;
 use core::ops::ControlFlow;
 use core::panic::PanicInfo;
+use esp_hal::clock::CpuClock;
+use esp_hal::gpio::Input;
+use esp_hal::ledc::timer::Timer;
+use esp_hal::ledc::{
+    channel::Number as ChannelNumber, timer::Number as TimerNumber, Ledc, LowSpeed,
+};
+use esp_hal::pcnt::channel::EdgeMode;
+use esp_hal::pcnt::Pcnt;
+use esp_hal::time::Instant;
+use esp_hal::uart::Uart;
+use esp_hal::{main, Blocking};
+use esp_start::com::uart;
+use esp_start::io::{OutputPins, PinConfig};
+use esp_start::pwm::{PwmChannelConfig, PwmTimerConfig};
+use esp_start::{io, pwm, timer};
+use static_cell::StaticCell;
+
+use core::fmt::Write;
+use core::ops::ControlFlow;
+use core::panic::PanicInfo;
 use embedded_hal_bus::spi::RefCellDevice;
 use esp_hal::delay::Delay;
 use esp_hal::{clock::CpuClock, main};
@@ -12,6 +32,45 @@ use esp_start::io::{self, ButtonId, InputEvent, ScreenOutPins, SdOutPins};
 use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
 use esp_start::sd::{SdStorage, SdStorageError};
 use esp_start::spi_bus;
+
+use core::fmt::Write;
+use core::net::Ipv4Addr;
+use core::panic::PanicInfo;
+use embassy_executor::Spawner;
+use embassy_net::IpAddress;
+use embassy_net::tcp::State;
+use esp_hal::Blocking;
+use esp_hal::clock::CpuClock;
+use esp_hal::ledc::timer::Timer;
+use esp_hal::ledc::{
+    Ledc, LowSpeed, channel::Number as ChannelNumber, timer::Number as TimerNumber,
+};
+use esp_hal::pcnt::Pcnt;
+use esp_hal::pcnt::channel::EdgeMode;
+use esp_hal::time::Instant;
+use esp_hal::timer::timg::TimerGroup;
+use esp_hal::uart::Uart;
+use esp_start::com::uart;
+use esp_start::io::{OutputPins, PinConfig};
+use esp_start::net::socket;
+use esp_start::pwm::{PwmChannelConfig, PwmTimerConfig};
+use esp_start::{io, net, pcnt, pwm, runtime, timer, wifi};
+use static_cell::StaticCell;
+
+const DEBOUNCE_DURATION_MS: u64 = 700;
+const TIMER_DELAY_MS: u64 = 300;
+const WIFI_SSID: &str = "HomeADSL";
+const WIFI_PASSWORD: &str = "Home#1405";
+
+static PWM_TIMER: StaticCell<Timer<'static, LowSpeed>> = StaticCell::new();
+
+enum LedMode {
+    Blink,
+    Fade,
+    Off,
+}
+
+// #############
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
@@ -23,8 +82,10 @@ fn panic(_: &PanicInfo) -> ! {
 // Don't remove this
 esp_bootloader_esp_idf::esp_app_desc!();
 
-#[main]
-fn main() -> ! {
+#[esp_rtos::main]
+async fn main(spawner: Spawner) -> ! {
+    runtime::allocate_heap();
+
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 

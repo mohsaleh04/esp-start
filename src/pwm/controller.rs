@@ -1,7 +1,4 @@
-use esp_hal::ledc::{
-    LowSpeed,
-    channel::{Channel, ChannelIFace},
-};
+use esp_hal::ledc::{channel::{Channel, ChannelIFace}, LowSpeed};
 
 pub struct PwmController<'d> {
     channel: Channel<'d, LowSpeed>,

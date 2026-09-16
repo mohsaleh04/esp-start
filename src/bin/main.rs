@@ -25,8 +25,7 @@ use esp_start::{pcnt, runtime, spi_bus, timer};
 
 const WIFI_SSID: &str = "HomeADSL";
 const WIFI_PASSWORD: &str = "Home#1405";
-const SERVER_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 101);
-const SERVER_PORT: u16 = 80;
+const SERVER_IP_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::new(192, 168, 1, 101), 80);
 const HTTP_REQUEST: &[u8] = b"GET /gpio/1 HTTP/1.1\r\n\
     Host: 192.168.1.101\r\n\
     Connection: close\r\n\
@@ -175,8 +174,8 @@ async fn main(spawner: Spawner) -> ! {
         Some(network) => Some(
             HttpClient::connect_and_send(
                 network.stack(),
-                SERVER_IP,
-                SERVER_PORT,
+                SERVER_IP_ADDR.0,
+                SERVER_IP_ADDR.1,
                 HTTP_REQUEST,
                 &mut uart,
             )

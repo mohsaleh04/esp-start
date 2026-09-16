@@ -14,9 +14,10 @@
 | SPI MOSI | 23   |
 | SPI MISO | 19   |
 | SD CS | 16   |
-| دکمهٔ اصلی (active-low) | 32   |
+| دکمهٔ backlight (active-low) | 32   |
+| دکمهٔ حالت LED (active-low) | 27 |
 | LED چشمک‌زن | 25 |
-| LEDهای PWM fade | 26 و 27 |
+| LEDهای PWM fade | 26 و 14 |
 | ورودی PCNT | 33 |
 
 برای کارهای عمومی، من فعلاً این گروه‌بندی رو تو ذهنت نگه می‌داشتم:

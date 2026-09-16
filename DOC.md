@@ -44,24 +44,27 @@ UI، فایل‌منیجر و برنامه‌های کوچک
 | SPI MOSI |      GPIO23 | داده از ESP32 به دستگاه‌ها |
 | SPI MISO |      GPIO19 | داده از SD به ESP32 |
 | SD CS |      GPIO16 | chip select کارت SD |
-| دکمهٔ اصلی |      GPIO32 | active-low با pull-up داخلی |
+| دکمهٔ backlight |      GPIO32 | active-low با pull-up داخلی |
+| دکمهٔ حالت LED |      GPIO27 | active-low با pull-up داخلی |
 | LED چشمک‌زن |      GPIO25 | خروجی دیجیتال |
 | LED محوشونده A |      GPIO26 | کانال PWM اول |
-| LED محوشونده B |      GPIO27 | کانال PWM دوم، مکمل کانال اول |
+| LED محوشونده B |      GPIO14 | کانال PWM دوم، مکمل کانال اول |
 | ورودی شمارندهٔ پالس |      GPIO33 | PCNT با pull-up داخلی |
 | UART TX |       GPIO1 | خروجی serial |
 | UART RX |       GPIO3 | ورودی serial |
 
 ### اتصال دکمه
 
-یک سمت دکمه به GPIO32 و سمت دیگر آن به GND وصل می‌شود. چون pull-up داخلی فعال است:
+هر دکمه یک سمتش به GPIO خودش و سمت دیگرش به GND وصل می‌شود. چون pull-up داخلی فعال است:
 
 ```text
-دکمه رها است  → GPIO32 = HIGH
-دکمه فشرده است → GPIO32 = LOW
+دکمه رها است  → GPIO = HIGH
+دکمه فشرده است → GPIO = LOW
 ```
 
-برای این ورودی مقاومت pull-up خارجی لازم نیست، هرچند در طراحی نهایی سخت‌افزار می‌توان مقاومت خارجی مناسب اضافه کرد.
+GPIO32 نور پس‌زمینهٔ LCD را toggle می‌کند. GPIO27 حالت LEDها را در چرخهٔ
+`Off → Blink → Fade → Off` جلو می‌برد. برای این ورودی‌ها مقاومت pull-up خارجی لازم نیست،
+هرچند در طراحی نهایی سخت‌افزار می‌توان مقاومت خارجی مناسب اضافه کرد.
 
 ## ۳. جریان راه‌اندازی برنامه
 
@@ -69,14 +72,14 @@ UI، فایل‌منیجر و برنامه‌های کوچک
 
 1. ESP32 با بیشترین کلاک CPU راه‌اندازی می‌شود.
 2. UART ساخته می‌شود تا مراحل boot قابل مشاهده باشند.
-3. handler عمومی GPIO نصب و دکمهٔ GPIO32 آماده می‌شود.
-4. bus مشترک SPI2 ساخته می‌شود.
-5. LCD با device مستقل خودش روی bus مشترک راه‌اندازی می‌شود.
-6. framebuffer خالی با `flush()` روی LCD فرستاده می‌شود.
-7. SD با chip select مستقل mount می‌شود.
-8. نتیجهٔ mount روی UART و LCD نمایش داده می‌شود.
-9. برنامه وارد event loop می‌شود.
-10. فشار دکمه backlight را روشن یا خاموش می‌کند.
+3. handler عمومی GPIO نصب و دکمه‌های GPIO32 و GPIO27 آماده می‌شوند.
+4. timer دوره‌ای و controller مربوط به LEDها ساخته می‌شوند.
+5. bus مشترک SPI2 ساخته می‌شود.
+6. LCD و سپس SD با device و chip select مستقل راه‌اندازی می‌شوند.
+7. framebuffer با `flush()` روی LCD فرستاده می‌شود.
+8. Wi-Fi، DHCP و client شبکه راه‌اندازی می‌شوند.
+9. PCNT روی GPIO33 آماده می‌شود.
+10. برنامه وارد event loop می‌شود و ورودی، LED، PCNT و شبکه را پیش می‌برد.
 
 نبودن SD یک خطای fatal نیست. سیستم پیام مناسب نشان می‌دهد و همچنان وارد event loop می‌شود.
 
@@ -251,16 +254,19 @@ match storage.mount() {
 API عمومی ورودی در `src/io/input_pins.rs` قرار دارد:
 
 ```rust
-setup_primary_button(pin);
+setup_backlight_button(pin);
+setup_led_mode_button(pin);
 next_input_event();
-primary_button_is_pressed();
+button_is_pressed(ButtonId::Backlight);
 ```
 
 رویدادهای فعلی:
 
 ```rust
-InputEvent::ButtonPressed(ButtonId::Primary)
-InputEvent::ButtonReleased(ButtonId::Primary)
+InputEvent::ButtonPressed(ButtonId::Backlight)
+InputEvent::ButtonPressed(ButtonId::LedMode)
+InputEvent::ButtonReleased(ButtonId::Backlight)
+InputEvent::ButtonReleased(ButtonId::LedMode)
 ```
 
 ### چرا فقط خواندن boolean کافی نبود؟
@@ -289,13 +295,15 @@ LOW → HIGH → LOW → HIGH → LOW
 6. اگر ۲۵ms از آخرین edge گذشته باشد، سطح پایدار پذیرفته می‌شود.
 7. فقط در صورت تغییر نسبت به وضعیت پایدار قبلی event ساخته می‌شود.
 
-این روش non-blocking است. ISR کوتاه می‌ماند و main loop مسئول پیش‌برد debounce است.
+هر دکمه state و debounce مستقل دارد. handler مشترک فقط pin دارای interrupt را ثبت می‌کند.
+این روش non-blocking است؛ ISR کوتاه می‌ماند و main loop با `next_input_event()`
+debounce هر دو دکمه را پیش می‌برد.
 
 ### صف event
 
 eventهای پذیرفته‌شده داخل یک ring buffer ثابت با ظرفیت ۸ قرار می‌گیرند. این صف heap ندارد و با `critical_section` بین ISR و main محافظت می‌شود.
 
-اگر صف کاملاً پر شود، event جدید فعلاً کنار گذاشته می‌شود. برای یک دکمه و main loop سریع این حالت بعید است، اما در آینده بهتر است overflow counter یا سیاست مشخص‌تری اضافه شود.
+اگر صف کاملاً پر شود، event جدید فعلاً کنار گذاشته می‌شود. برای دو دکمه و main loop سریع این حالت بعید است، اما در آینده بهتر است overflow counter یا سیاست مشخص‌تری اضافه شود.
 
 ## ۹. event loop فعلی
 
@@ -305,23 +313,26 @@ eventهای پذیرفته‌شده داخل یک ring buffer ثابت با ظر
 loop {
     while let Some(event) = io::next_input_event() {
         match event {
-            InputEvent::ButtonPressed(ButtonId::Primary) => {
+            InputEvent::ButtonPressed(ButtonId::Backlight) => {
                 screen.toggle_backlight();
             }
-            InputEvent::ButtonReleased(ButtonId::Primary) => {
-                // log
+            InputEvent::ButtonPressed(ButtonId::LedMode) => {
+                leds.cycle_mode();
             }
+            InputEvent::ButtonReleased(button) => log(button),
         }
     }
 
-    core::hint::spin_loop();
+    leds.update();
+    Timer::after(Duration::from_millis(1)).await;
 }
 ```
 
-فعلاً فشار دکمه backlight را toggle می‌کند. این رفتار ساده ثابت می‌کند که مسیر کامل زیر کار می‌کند:
+دو مسیر event فعلی چنین‌اند:
 
 ```text
-دکمه → GPIO interrupt → debounce → event queue → main loop → LCD backlight
+GPIO32 → interrupt → debounce → event queue → LCD backlight
+GPIO27 → interrupt → debounce → event queue → LedController
 ```
 
 وقتی UI ساخته شود، همین match می‌تواند eventها را به menu، file manager یا application فعال تحویل دهد.
@@ -329,6 +340,8 @@ loop {
 ## ۱۰. PWM
 
 ماژول `src/pwm` timer و channel مربوط به LEDC را می‌سازد.
+ماژول `src/leds.rs` لایهٔ رفتاری بالاتر است و حالت‌های Off، Blink و Fade،
+state مربوط به fade و زمان آخرین update را نگه می‌دارد.
 
 `PwmController::set_duty` فقط duty cycle را تنظیم می‌کند:
 
@@ -367,8 +380,10 @@ UART در این پروژه ابزار اصلی مشاهدهٔ رفتار داخ
 | `src/screen/` | درایور، framebuffer، graphics و text |
 | `src/sd/` | SD card، FAT volume و time source |
 | `src/io/` | pin config، GPIO interrupt، debounce و input events |
+| `src/leds.rs` | state machine مربوط به Off، Blink و Fade |
 | `src/pwm/` | تنظیم LEDC PWM |
 | `src/timer/` | timer دوره‌ای و شمارنده |
+| `src/net/` | Wi-Fi network stack، TCP client و polling پاسخ |
 | `src/com/uart.rs` | UART0 |
 | `src/utils.rs` | delay سادهٔ busy-wait |
 | `src/lib.rs` | export ماژول‌های کتابخانه |
@@ -424,7 +439,7 @@ espflash flash --monitor target/xtensa-esp32-none-elf/debug/esp-start
 
 - `flush()` کل framebuffer را می‌فرستد.
 - event queue فقط ۸ خانه دارد و overflow report ندارد.
-- تنها یک دکمه تعریف شده است.
+- فعلاً دو دکمهٔ اختصاصی تعریف شده‌اند و هنوز navigation کامل نداریم.
 - timestamp مربوط به SD ثابت و جعلی است.
 - main loop هنوز sleep یا power management ندارد.
 - UI manager و routing رویداد میان applicationها ساخته نشده است.

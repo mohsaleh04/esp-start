@@ -1,11 +1,12 @@
 use crate::io::{PinConfig, interrupt};
 use esp_hal::gpio::{Input, InputPin};
 
-pub const PRIMARY_BUTTON_DEBOUNCE_MS: u64 = 25;
+pub const BUTTON_DEBOUNCE_MS: u64 = 25;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ButtonId {
-    Primary,
+    Backlight,
+    LedMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -14,14 +15,22 @@ pub enum InputEvent {
     ButtonReleased(ButtonId),
 }
 
-pub fn setup_primary_button(pin: impl InputPin + 'static) {
-    interrupt::init_primary_button(Input::new(pin, PinConfig::PullUp.as_input()))
+pub fn setup_backlight_button(pin: impl InputPin + 'static) {
+    setup_button(ButtonId::Backlight, pin);
+}
+
+pub fn setup_led_mode_button(pin: impl InputPin + 'static) {
+    setup_button(ButtonId::LedMode, pin);
+}
+
+fn setup_button(button_id: ButtonId, pin: impl InputPin + 'static) {
+    interrupt::init_button(button_id, Input::new(pin, PinConfig::PullUp.as_input()));
 }
 
 pub fn next_input_event() -> Option<InputEvent> {
     interrupt::next_event()
 }
 
-pub fn primary_button_is_pressed() -> bool {
-    interrupt::primary_button_is_pressed()
+pub fn button_is_pressed(button_id: ButtonId) -> bool {
+    interrupt::button_is_pressed(button_id)
 }

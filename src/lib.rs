@@ -3,6 +3,7 @@ extern crate alloc;
 
 pub mod com;
 pub mod io;
+pub mod leds;
 pub mod net;
 pub mod pcnt;
 pub mod pwm;

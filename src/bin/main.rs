@@ -8,92 +8,29 @@ use core::ops::ControlFlow;
 use core::panic::PanicInfo;
 
 use embassy_executor::Spawner;
-use embassy_net::IpAddress;
-use embassy_net::tcp::State;
-use embassy_time::{Duration as EmbassyDuration, Timer as EmbassyTimer, with_timeout};
+use embassy_time::{Duration, Timer};
 use embedded_hal_bus::spi::RefCellDevice;
 use esp_hal::clock::CpuClock;
 use esp_hal::delay::Delay;
-use esp_hal::gpio::{Level, Output, OutputConfig};
-use esp_hal::ledc::timer::Timer;
-use esp_hal::ledc::{
-    Ledc, LowSpeed, channel::Number as ChannelNumber, timer::Number as TimerNumber,
-};
 use esp_hal::pcnt::Pcnt;
 use esp_hal::pcnt::channel::EdgeMode;
 use esp_hal::timer::timg::TimerGroup;
 use esp_start::com::uart;
 use esp_start::io::{self, ButtonId, InputEvent, PinConfig, ScreenOutPins, SdOutPins};
-use esp_start::net::socket;
-use esp_start::pwm::{PwmChannelConfig, PwmTimerConfig};
+use esp_start::leds::{LedController, UPDATE_INTERVAL_MS};
+use esp_start::net::{HttpClient, WifiNetwork};
 use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
 use esp_start::sd::{SdStorage, SdStorageError};
-use esp_start::{net, pcnt, pwm, runtime, spi_bus, timer, wifi};
-use static_cell::StaticCell;
+use esp_start::{pcnt, runtime, spi_bus, timer};
 
-const TIMER_DELAY_MS: u64 = 300;
-const NETWORK_POLL_MS: u64 = 10;
 const WIFI_SSID: &str = "HomeADSL";
 const WIFI_PASSWORD: &str = "Home#1405";
 const SERVER_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 101);
 const SERVER_PORT: u16 = 80;
-
-static PWM_TIMER: StaticCell<Timer<'static, LowSpeed>> = StaticCell::new();
-
-#[derive(Clone, Copy, Debug)]
-enum LedMode {
-    Off,
-    Blink,
-    Fade,
-}
-
-impl LedMode {
-    fn next(self) -> Self {
-        match self {
-            Self::Off => Self::Blink,
-            Self::Blink => Self::Fade,
-            Self::Fade => Self::Off,
-        }
-    }
-}
-
-struct FadeState {
-    duty: u8,
-    descending: bool,
-    last_timer_count: u32,
-}
-
-impl FadeState {
-    fn new(timer_count: u32) -> Self {
-        Self {
-            duty: 0,
-            descending: false,
-            last_timer_count: timer_count,
-        }
-    }
-
-    fn reset(&mut self, timer_count: u32) {
-        self.duty = 0;
-        self.descending = false;
-        self.last_timer_count = timer_count;
-    }
-
-    fn advance(&mut self) {
-        if self.descending {
-            if self.duty == 0 {
-                self.descending = false;
-                self.duty = 10;
-            } else {
-                self.duty = self.duty.saturating_sub(10);
-            }
-        } else if self.duty >= 100 {
-            self.descending = true;
-            self.duty = 90;
-        } else {
-            self.duty += 10;
-        }
-    }
-}
+const HTTP_REQUEST: &[u8] = b"GET /gpio/1 HTTP/1.1\r\n\
+    Host: 192.168.1.101\r\n\
+    Connection: close\r\n\
+    \r\n";
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
@@ -113,35 +50,25 @@ async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(config);
     let mut uart = uart::setup(peripherals.UART0, peripherals.GPIO1, peripherals.GPIO3);
 
-    // --- Input and periodic timer ---
+    // --- Input and scheduling ---
     io::setup(peripherals.IO_MUX);
-    io::setup_primary_button(peripherals.GPIO32);
-    uart.write_str("[INPUT] Primary button ready on GPIO32\r\n")
+    io::setup_backlight_button(peripherals.GPIO32);
+    io::setup_led_mode_button(peripherals.GPIO27);
+    uart.write_str("[INPUT] Backlight button ready on GPIO32\r\n")
+        .unwrap();
+    uart.write_str("[INPUT] LED mode button ready on GPIO27\r\n")
         .unwrap();
 
     let timer_group = TimerGroup::new(peripherals.TIMG0);
-    timer::setup(timer_group.timer0, TIMER_DELAY_MS);
+    timer::setup(timer_group.timer0, UPDATE_INTERVAL_MS);
     runtime::setup_scheduler(peripherals.SW_INTERRUPT, timer_group.timer1);
 
-    // --- LEDs: GPIO25 blink, GPIO26/GPIO27 complementary PWM fade ---
-    let mut blink_led = Output::new(peripherals.GPIO25, Level::Low, OutputConfig::default());
-
-    let mut ledc = Ledc::new(peripherals.LEDC);
-    let pwm_timer = PWM_TIMER.init(ledc.timer::<LowSpeed>(TimerNumber::Timer0));
-    pwm::setup_timer(pwm_timer, PwmTimerConfig::default(500));
-    let mut fade_led_a = pwm::setup_channel(
-        &mut ledc,
+    // GPIO25 blinks. GPIO26 and GPIO14 are the complementary PWM fade pair.
+    let mut leds = LedController::new(
+        peripherals.LEDC,
+        peripherals.GPIO25,
         peripherals.GPIO26,
-        pwm_timer,
-        ChannelNumber::Channel1,
-        PwmChannelConfig::default(),
-    );
-    let mut fade_led_b = pwm::setup_channel(
-        &mut ledc,
-        peripherals.GPIO27,
-        pwm_timer,
-        ChannelNumber::Channel2,
-        PwmChannelConfig::default(),
+        peripherals.GPIO14,
     );
 
     // --- Shared SPI bus ---
@@ -235,48 +162,28 @@ async fn main(spawner: Spawner) -> ! {
         writeln!(uart, "[LCD] Flush failed: {error:#?}").unwrap();
     }
 
-    // --- Wi-Fi and TCP ---
-    uart.write_str("[WIFI] Initializing ... ").unwrap();
-    let (mut wifi_controller, wifi_interfaces) = wifi::setup(peripherals.WIFI);
-    wifi::config::set_station_config(&mut wifi_controller, WIFI_SSID, Some(WIFI_PASSWORD));
-    let (net_stack, net_runner) = net::setup(wifi_interfaces.station);
-    net::runner::run_wifi_net_task(spawner, net_runner);
-    uart.write_str("SUCCESS\r\n[WIFI] Connecting ...\r\n")
-        .unwrap();
-
-    let wifi_connected = wifi::connection::connect(&mut wifi_controller, &mut uart).await;
-    if wifi_connected {
-        net::wait_for_config_up(net_stack, &mut uart).await;
-        uart.write_str("[NET] Network is up\r\n").unwrap();
-        if let Some(config) = net_stack.config_v4() {
-            writeln!(uart, "[NET] IPv4 config: {config:?}").unwrap();
-        }
-    }
-
-    let mut tcp_socket = socket::new(net_stack);
-    let mut tcp_socket_up = false;
-    if wifi_connected && net_stack.is_config_up() {
-        writeln!(uart, "[TCP] Connecting to {SERVER_IP}:{SERVER_PORT} ...").unwrap();
-        let connect_result =
-            socket::connect_tcp(&mut tcp_socket, IpAddress::Ipv4(SERVER_IP), SERVER_PORT).await;
-
-        if let Err(error) = connect_result {
-            writeln!(uart, "[TCP] Connection failed: {error:?}").unwrap();
-        } else if tcp_socket.state() == State::Established {
-            tcp_socket_up = true;
-            uart.write_str("[TCP] Connected\r\n").unwrap();
-            let request = b"GET /gpio/1 HTTP/1.1\r\n\
-                Host: 192.168.1.101\r\n\
-                Connection: close\r\n\
-                \r\n";
-            if let Err(error) = tcp_socket.write(request).await {
-                writeln!(uart, "[TCP] Request failed: {error:?}").unwrap();
-                tcp_socket_up = false;
-            }
-        } else {
-            writeln!(uart, "[TCP] Connection failed: {:?}", tcp_socket.state()).unwrap();
-        }
-    }
+    // --- Wi-Fi and HTTP ---
+    let wifi_network = WifiNetwork::connect(
+        peripherals.WIFI,
+        spawner,
+        WIFI_SSID,
+        Some(WIFI_PASSWORD),
+        &mut uart,
+    )
+    .await;
+    let mut http_client = match wifi_network.as_ref() {
+        Some(network) => Some(
+            HttpClient::connect_and_send(
+                network.stack(),
+                SERVER_IP,
+                SERVER_PORT,
+                HTTP_REQUEST,
+                &mut uart,
+            )
+            .await,
+        ),
+        None => None,
+    };
 
     // --- Pulse counter on GPIO33 ---
     let pulse_counter = Pcnt::new(peripherals.PCNT);
@@ -290,58 +197,26 @@ async fn main(spawner: Spawner) -> ! {
     );
     pulse_unit.clear();
     pulse_unit.resume();
-
-    let mut led_mode = LedMode::Off;
-    let mut last_blink_timer_count = timer::event_counter();
-    let mut fade_state = FadeState::new(last_blink_timer_count);
     let mut last_pulse_count = pulse_unit.value();
-    let mut response_buffer = [0_u8; 512];
 
     loop {
         while let Some(event) = io::next_input_event() {
             match event {
-                InputEvent::ButtonPressed(ButtonId::Primary) => {
-                    led_mode = led_mode.next();
-                    writeln!(uart, "[INPUT] LED mode: {led_mode:?}").unwrap();
-
-                    blink_led.set_low();
-                    fade_led_a.off();
-                    fade_led_b.off();
-                    let timer_count = timer::event_counter();
-                    last_blink_timer_count = timer_count;
-                    fade_state.reset(timer_count);
+                InputEvent::ButtonPressed(ButtonId::Backlight) => {
+                    screen.toggle_backlight();
+                    uart.write_str("[INPUT] Backlight toggled\r\n").unwrap();
                 }
-                InputEvent::ButtonReleased(ButtonId::Primary) => {
-                    uart.write_str("[INPUT] Primary button released\r\n")
-                        .unwrap();
+                InputEvent::ButtonPressed(ButtonId::LedMode) => {
+                    let mode = leds.cycle_mode();
+                    writeln!(uart, "[INPUT] LED mode: {mode:?}").unwrap();
+                }
+                InputEvent::ButtonReleased(button) => {
+                    writeln!(uart, "[INPUT] {button:?} button released").unwrap();
                 }
             }
         }
 
-        let timer_count = timer::event_counter();
-        match led_mode {
-            LedMode::Off => {}
-            LedMode::Blink => {
-                let elapsed_ticks = timer_count.wrapping_sub(last_blink_timer_count);
-                if elapsed_ticks != 0 {
-                    if !elapsed_ticks.is_multiple_of(2) {
-                        blink_led.toggle();
-                    }
-                    last_blink_timer_count = timer_count;
-                }
-            }
-            LedMode::Fade => {
-                let elapsed_ticks = timer_count.wrapping_sub(fade_state.last_timer_count);
-                for _ in 0..elapsed_ticks {
-                    fade_state.advance();
-                }
-                if elapsed_ticks != 0 {
-                    fade_led_a.set_duty(fade_state.duty);
-                    fade_led_b.set_duty(100 - fade_state.duty);
-                    fade_state.last_timer_count = timer_count;
-                }
-            }
-        }
+        leds.update();
 
         let pulse_count = pulse_unit.value();
         if pulse_count != last_pulse_count {
@@ -349,30 +224,11 @@ async fn main(spawner: Spawner) -> ! {
             last_pulse_count = pulse_count;
         }
 
-        if tcp_socket_up {
-            match with_timeout(
-                EmbassyDuration::from_millis(NETWORK_POLL_MS),
-                tcp_socket.read(&mut response_buffer),
-            )
-            .await
-            {
-                Ok(Ok(0)) => {
-                    uart.write_str("[TCP] Connection closed\r\n").unwrap();
-                    tcp_socket_up = false;
-                }
-                Ok(Ok(size)) => match core::str::from_utf8(&response_buffer[..size]) {
-                    Ok(text) => writeln!(uart, "[TCP] {text}").unwrap(),
-                    Err(_) => uart.write_str("[TCP] Received non-UTF-8 data\r\n").unwrap(),
-                },
-                Ok(Err(error)) => {
-                    writeln!(uart, "[TCP] Read failed: {error:?}").unwrap();
-                    tcp_socket_up = false;
-                }
-                Err(_) => {}
-            }
+        if let Some(client) = http_client.as_mut() {
+            client.poll(&mut uart).await;
         }
 
-        // Yield even when the TCP socket is down so the network runner can execute.
-        EmbassyTimer::after(EmbassyDuration::from_millis(1)).await;
+        // Yield so the Embassy network runner can execute even with no TCP traffic.
+        Timer::after(Duration::from_millis(1)).await;
     }
 }

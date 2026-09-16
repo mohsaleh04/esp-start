@@ -1,205 +1,148 @@
 #![no_std]
 #![no_main]
-#![deny(
-    clippy::mem_forget,
-    reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
-    holding buffers for the duration of a data transfer."
-)]
-#![deny(clippy::large_stack_frames)]
 
 use core::fmt::Write;
+use core::ops::ControlFlow;
 use core::panic::PanicInfo;
-use esp_hal::clock::CpuClock;
-use esp_hal::gpio::Input;
-use esp_hal::ledc::timer::Timer;
-use esp_hal::ledc::{
-    channel::Number as ChannelNumber, timer::Number as TimerNumber, Ledc, LowSpeed,
-};
-use esp_hal::pcnt::channel::EdgeMode;
-use esp_hal::pcnt::Pcnt;
-use esp_hal::time::Instant;
-use esp_hal::uart::Uart;
-use esp_hal::{main, Blocking};
+use embedded_hal_bus::spi::RefCellDevice;
+use esp_hal::delay::Delay;
+use esp_hal::{clock::CpuClock, main};
 use esp_start::com::uart;
-use esp_start::io::{OutputPins, PinConfig};
-use esp_start::pwm::{PwmChannelConfig, PwmTimerConfig};
-use esp_start::{io, pwm, timer};
-use static_cell::StaticCell;
-
-const DEBOUNCE_DURATION_MS: u64 = 700;
-const TIMER_DELAY_MS: u64 = 300;
-
-static PWM_TIMER: StaticCell<Timer<'static, LowSpeed>> = StaticCell::new();
-
-enum LedMode {
-    Blink,
-    Fade,
-    Off,
-}
-
-// #############
+use esp_start::io::{self, ButtonId, InputEvent, ScreenOutPins, SdOutPins};
+use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
+use esp_start::sd::{SdStorage, SdStorageError};
+use esp_start::spi_bus;
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
-    loop {}
+    loop {
+        core::hint::spin_loop();
+    }
 }
 
-// Don't Remove This Code! Code for bootloader
+// Don't remove this
 esp_bootloader_esp_idf::esp_app_desc!();
 
-#[allow(
-    clippy::large_stack_frames,
-    reason = "it's not unusual to allocate larger buffers etc. in main"
-)]
 #[main]
 fn main() -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    let _peripherals = esp_hal::init(config);
+    let peripherals = esp_hal::init(config);
 
-    let mut uart = uart::setup(_peripherals.UART0, _peripherals.GPIO1, _peripherals.GPIO3);
-    let mut output_pins = OutputPins::new(_peripherals.GPIO23, _peripherals.GPIO21);
+    let mut uart = uart::setup(peripherals.UART0, peripherals.GPIO1, peripherals.GPIO3);
 
-    let mut ledc = Ledc::new(_peripherals.LEDC);
-    let pwm_timer = PWM_TIMER.init(ledc.timer::<LowSpeed>(TimerNumber::Timer0));
-    pwm::setup_timer(pwm_timer, PwmTimerConfig::default(500));
+    io::setup(peripherals.IO_MUX);
+    io::setup_primary_button(peripherals.GPIO32);
+    uart.write_str("[INPUT] Primary button ready on GPIO32\r\n").unwrap();
+    uart.write_str("\r\n").unwrap();
 
-    let mut pwm_control = pwm::setup_channel(
-        &mut ledc,
-        _peripherals.GPIO19,
-        pwm_timer,
-        ChannelNumber::Channel1,
-        PwmChannelConfig::default(),
+    let spi_bus = spi_bus::setup(
+        peripherals.SPI2,
+        peripherals.GPIO18, // SCK
+        peripherals.GPIO23, // MOSI
+        peripherals.GPIO19, // MISO (for SD)
     );
 
-    let mut pwm_control2 = pwm::setup_channel(
-        &mut ledc,
-        _peripherals.GPIO18,
-        pwm_timer,
-        ChannelNumber::Channel2,
-        PwmChannelConfig::default(),
+    // --- LCD ---
+    uart.write_str("[LCD] Initializing ... ").unwrap();
+    let screen_out_pins = ScreenOutPins::new(
+        peripherals.GPIO22, // backlight
+        peripherals.GPIO21, // rst
+        peripherals.GPIO17, // dc
+        peripherals.GPIO5,  // cs
     );
 
-    io::setup(_peripherals.IO_MUX, _peripherals.GPIO22);
-    timer::setup(_peripherals.TIMG0, TIMER_DELAY_MS);
+    let screen_res = ScreenController::init(
+        DEFAULT_CONTRAST,
+        ScreenDriver::new(
+            RefCellDevice::new(&spi_bus, screen_out_pins.cs, Delay::new()).unwrap(),
+            screen_out_pins.screen,
+        ),
+    );
+    let mut screen = match screen_res {
+        Ok(screen) => screen,
+        Err(error) => {
+            uart.write_str("FAILED\r\n").unwrap();
+            writeln!(uart, "--> Error: {error:#?}").unwrap();
+            loop {
+                core::hint::spin_loop();
+            }
+        }
+    };
+    screen.clear();
+    if let Err(error) = screen.flush() {
+        uart.write_str("FAILED\r\n").unwrap();
+        writeln!(uart, "--> Error: {error:#?}").unwrap();
+        loop {
+            core::hint::spin_loop();
+        }
+    }
+    screen.toggle_backlight();
+    uart.write_str("SUCCESS\r\n").unwrap();
 
-    ////////
+    // --- SD Card ---
+    uart.write_str("[SD] Mounting ... ").unwrap();
+    let sd_out_pins = SdOutPins::new(peripherals.GPIO16); // cs
+    let sd_spi = RefCellDevice::new(&spi_bus, sd_out_pins.cs, Delay::new()).unwrap();
+    let storage = SdStorage::new(sd_spi, Delay::new());
 
-    let pcnt = Pcnt::new(_peripherals.PCNT);
+    match storage.mount() {
+        Ok(sd) => {
+            uart.write_str("SUCCESS\r\n").unwrap();
+            let size_mb = sd.size_bytes() / 1_048_576;
+            writeln!(uart, "[SD] Size: {size_mb} MB").unwrap();
 
-    let unit = pcnt.unit0;
-    let input = Input::new(_peripherals.GPIO33, PinConfig::PullUp.as_input());
-    let signal = input.peripheral_input();
+            screen.draw_fmt(
+                (0, 0),
+                format_args!("Setup Complete\nSD Size: {size_mb} MB"),
+                true,
+                false,
+            );
 
-    let channel = &unit.channel0;
+            if let Err(error) = sd.for_each_root_entry(|entry| {
+                writeln!(
+                    uart,
+                    "{} {:?} {} bytes",
+                    entry.name, entry.attributes, entry.size
+                )
+                .unwrap();
+                ControlFlow::Continue(())
+            }) {
+                match error {
+                    SdStorageError::CardNotFound => writeln!(uart, "[SD] Card removed").unwrap(),
+                    error => writeln!(uart, "[SD] Root directory read failed: {error:?}").unwrap(),
+                }
+            }
+        }
+        Err(SdStorageError::CardNotFound) => {
+            uart.write_str("NOT FOUND\r\n").unwrap();
+            screen.draw_text((0, 0), "Setup Complete\nSD not inserted", true, false);
+        }
+        Err(error) => {
+            uart.write_str("FAILED\r\n").unwrap();
+            writeln!(uart, "--> Error: {error:?}").unwrap();
+            screen.draw_text((0, 0), "Setup Complete\nSD mount failed", true, false);
+        }
+    }
 
-    channel.set_edge_signal(signal);
-
-    channel.set_input_mode(EdgeMode::Increment, EdgeMode::Hold);
-
-    unit.clear();
-    unit.resume();
-
-    ////////
-
-    let mut last_event_call_count = 0;
-
-    let mut led_mod = LedMode::Off;
-
-    let mut pwm_led_fade_mulp = 1;
-    let mut pwm_led_fade_down = false;
-
-    let mut last_button_pressed: Option<Instant> = None;
-
-    let mut last_pcnt_count = 0;
+    if let Err(error) = screen.flush() {
+        writeln!(uart, "[LCD] Flush failed: {error:#?}").unwrap();
+    }
 
     loop {
-        let mut button_act_permitted = true;
-        if io::test_button_pressed() {
-            if let Some(last_btn_act) = last_button_pressed.as_mut() {
-                if (Instant::now().duration_since_epoch().as_millis()
-                    - last_btn_act.duration_since_epoch().as_millis()) <= DEBOUNCE_DURATION_MS
-                {
-                    button_act_permitted = false;
+        while let Some(event) = io::next_input_event() {
+            match event {
+                InputEvent::ButtonPressed(ButtonId::Primary) => {
+                    uart.write_str("[INPUT] Primary button pressed\r\n")
+                        .unwrap();
+                    screen.toggle_backlight();
+                }
+                InputEvent::ButtonReleased(ButtonId::Primary) => {
+                    uart.write_str("[INPUT] Primary button released\r\n")
+                        .unwrap();
                 }
             }
-
-            if button_act_permitted {
-                led_mod = switch_led_mode(led_mod);
-                last_button_pressed = Some(Instant::now());
-
-                pwm_control.off();
-                pwm_control2.off();
-                output_pins.blink_led.set_low();
-                output_pins.test_led.set_high();
-            }
-        } else {
-            output_pins.test_led.set_low();
         }
 
-        // --- LED Handler Menu ---
-        match led_mod {
-            LedMode::Blink => {
-                blink_led(&mut uart, &mut output_pins, &mut last_event_call_count);
-            }
-            LedMode::Fade => {
-                // uart.write_str("pwm leds selected.\r\n").unwrap();
-                let upper_bound = 10;
-                pwm_control.set_duty(pwm_led_fade_mulp * 10, 100);
-                pwm_control2.set_duty((upper_bound - pwm_led_fade_mulp) * 10, 100);
-                if pwm_led_fade_down {
-                    if pwm_led_fade_mulp < 1 {
-                        pwm_led_fade_down = false;
-                        pwm_led_fade_mulp = 0;
-                        continue;
-                    }
-                    pwm_led_fade_mulp -= 1;
-                } else {
-                    if pwm_led_fade_mulp >= upper_bound {
-                        pwm_led_fade_down = true;
-                        pwm_led_fade_mulp = upper_bound;
-                        continue;
-                    }
-                    pwm_led_fade_mulp += 1;
-                }
-            }
-            LedMode::Off => {
-                output_pins.test_led.set_low();
-                output_pins.blink_led.set_low();
-                pwm_control.off();
-                pwm_control2.off();
-            }
-        }
-
-        // TODO: Needed an extra push button in _GPIO33_ for create this PCNT pulse  (Even though could be a clock generator like NE555P cercuit.)
-        let count = &unit.value();
-        if last_pcnt_count != *count {
-            write!(uart, "current pcnt value: {}\r\n", count).unwrap();
-            last_pcnt_count = *count;
-        }
+        core::hint::spin_loop();
     }
-}
-
-// #####################
-
-fn switch_led_mode(led_mod: LedMode) -> LedMode {
-    match led_mod {
-        LedMode::Off => LedMode::Blink,
-        LedMode::Blink => LedMode::Fade,
-        LedMode::Fade => LedMode::Off,
-    }
-}
-
-fn blink_led(
-    uart: &mut Uart<Blocking>,
-    board_pins: &mut OutputPins,
-    last_event_call_count: &mut u32,
-) {
-    let timer_counter = timer::event_counter();
-    let mut i = 0;
-    while i < timer_counter.wrapping_sub(*last_event_call_count) {
-        write!(uart, "L{}: toggle led!\r\n", *last_event_call_count + i + 1).unwrap();
-        board_pins.blink_led.toggle();
-        i += 1
-    }
-    *last_event_call_count = timer_counter;
 }

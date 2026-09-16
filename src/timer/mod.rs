@@ -1,11 +1,11 @@
 use crate::timer::handler::timer_handler;
 use crate::timer::scheduler::schedule_timer;
 use core::sync::atomic::Ordering;
-use esp_hal::timer::timg::{TimerGroup, TimerGroupInstance};
 use esp_hal::timer::PeriodicTimer;
+use esp_hal::timer::timg::{TimerGroup, TimerGroupInstance};
 
-mod scheduler;
 mod handler;
+mod scheduler;
 mod states;
 
 pub fn setup<T: TimerGroupInstance + 'static>(_timer_group_perip: T, timer_every_millis: u64) {

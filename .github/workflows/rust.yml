@@ -28,7 +28,10 @@ jobs:
 
       - name: Install ESP Rust toolchain
         run: |
-          espup install
+          espup install \
+            --toolchain-version 1.98.1.0 \
+            --name esp-1.98.1 \
+            --targets esp32
 
       - name: Load ESP environment
         run: |

@@ -1,137 +1,125 @@
-# راهنمای پروژهٔ esp-start
+# esp-start Architecture and Development Guide
 
-این فایل یک نقشهٔ آموزشی از وضعیت فعلی پروژه است. هدفش این است که چند ماه بعد هم بتوانیم سریع بفهمیم هر قسمت چه کاری انجام می‌دهد، چرا به این شکل طراحی شده و برای ادامهٔ کار باید از کجا شروع کنیم.
+This document is the technical map of `esp-start`. It records what the firmware currently does, why important architectural choices were made, and which constraints should guide future work. It is intended to make the project understandable even after a long break from development.
 
-## ۱. این پروژه چیست؟
+## 1. Project purpose
 
-`esp-start` یک پروژهٔ Rust از نوع `no_std` برای ESP32 کلاسیک است. هدف نهایی، ساختن یک محیط کوچک و یکپارچه شبیه یک کامپیوتر embedded است؛ نه یک سیستم‌عامل کامل مثل Linux.
+`esp-start` is a `no_std` embedded Rust project for the classic ESP32. Its long-term goal is a small, integrated embedded computer rather than a collection of unrelated hardware demonstrations.
 
-تصویر کلی معماری مورد نظر:
-
-```text
-راه‌اندازی و main loop
-        ↓
-درایورها و abstractionهای سخت‌افزار
-        ↓
-نمایشگر + ورودی + حافظه + ارتباطات
-        ↓
-UI، فایل‌منیجر و برنامه‌های کوچک
-```
-
-در وضعیت فعلی این قسمت‌ها واقعاً در source وجود دارند:
-
-- نمایشگر Nokia 5110 با کنترلر PCD8544
-- framebuffer و رسم شکل و متن
-- microSD و FAT volume
-- SPI مشترک میان LCD و SD
-- یک دکمهٔ interrupt-based با debounce
-- UART برای log
-- abstraction اولیهٔ PWM و timer
-- اتصال Wi-Fi، DHCP و یک HTTP client آزمایشی
-
-ماژول‌های فعال `src/wifi/` و `src/net/` اتصال station، پیکربندی DHCP، TCP و polling پاسخ HTTP را پیاده‌سازی می‌کنند.
-
-## ۲. سخت‌افزار و سیم‌کشی فعلی
-
-مرجع نهایی سیم‌کشی همیشه `src/bin/main.rs` است.
-
-| قطعه یا سیگنال | پایهٔ ESP32 | توضیح |
-|---|------------:|---|
-| LCD BL |      GPIO22 | نور پس‌زمینه |
-| LCD RST |      GPIO21 | reset نمایشگر |
-| LCD DC |      GPIO17 | انتخاب command یا data |
-| LCD CS |       GPIO5 | chip select نمایشگر |
-| SPI SCK |      GPIO18 | کلاک مشترک LCD و SD |
-| SPI MOSI |      GPIO23 | داده از ESP32 به دستگاه‌ها |
-| SPI MISO |      GPIO19 | داده از SD به ESP32 |
-| SD CS |      GPIO16 | chip select کارت SD |
-| دکمهٔ backlight |      GPIO32 | active-low با pull-up داخلی |
-| دکمهٔ حالت LED |      GPIO27 | active-low با pull-up داخلی |
-| LED چشمک‌زن |      GPIO25 | خروجی دیجیتال |
-| LED محوشونده A |      GPIO26 | کانال PWM اول |
-| LED محوشونده B |      GPIO14 | کانال PWM دوم، مکمل کانال اول |
-| ورودی شمارندهٔ پالس |      GPIO33 | PCNT با pull-up داخلی |
-| UART TX |       GPIO1 | خروجی serial |
-| UART RX |       GPIO3 | ورودی serial |
-
-### اتصال دکمه
-
-هر دکمه یک سمتش به GPIO خودش و سمت دیگرش به GND وصل می‌شود. چون pull-up داخلی فعال است:
+The intended architecture is:
 
 ```text
-دکمه رها است  → GPIO = HIGH
-دکمه فشرده است → GPIO = LOW
+boot and runtime
+        |
+hardware abstractions and drivers
+        |
+display + input + storage + networking
+        |
+UI, shell, file manager, and small applications
 ```
 
-GPIO32 نور پس‌زمینهٔ LCD را toggle می‌کند. GPIO27 حالت LEDها را در چرخهٔ
-`Off → Blink → Fade → Off` جلو می‌برد. برای این ورودی‌ها مقاومت pull-up خارجی لازم نیست،
-هرچند در طراحی نهایی سخت‌افزار می‌توان مقاومت خارجی مناسب اضافه کرد.
+The term "mini OS" describes this integration. It does not mean implementing a Linux-like kernel. The project prioritizes learning and explicit ownership of the mechanisms involved: SPI, framebuffer layout, drawing algorithms, interrupts, asynchronous networking, storage, and constrained-memory design.
 
-## ۳. جریان راه‌اندازی برنامه
+The source currently contains working implementations for:
 
-نقطهٔ ورود برنامه `src/bin/main.rs` است. ترتیب کلی boot:
+- Nokia 5110 / PCD8544 display control
+- A monochrome framebuffer with shape and ASCII text drawing
+- Shared SPI access for the LCD and microSD card
+- FAT volume mounting and root-directory traversal
+- Two interrupt-driven buttons with debounce and queued events
+- UART logging, PWM LEDs, a periodic hardware timer, and PCNT
+- Wi-Fi station setup, DHCP, TCP, and a small HTTP demonstration client
+- An Embassy-driven main event loop
 
-1. ESP32 با بیشترین کلاک CPU راه‌اندازی می‌شود.
-2. UART ساخته می‌شود تا مراحل boot قابل مشاهده باشند.
-3. handler عمومی GPIO نصب و دکمه‌های GPIO32 و GPIO27 آماده می‌شوند.
-4. timer دوره‌ای و controller مربوط به LEDها ساخته می‌شوند.
-5. bus مشترک SPI2 ساخته می‌شود.
-6. LCD و سپس SD با device و chip select مستقل راه‌اندازی می‌شوند.
-7. framebuffer با `flush()` روی LCD فرستاده می‌شود.
-8. Wi-Fi، DHCP و client شبکه راه‌اندازی می‌شوند.
-9. PCNT روی GPIO33 آماده می‌شود.
-10. برنامه وارد event loop می‌شود و ورودی، LED، PCNT و شبکه را پیش می‌برد.
+## 2. Hardware and wiring
 
-نبودن SD یک خطای fatal نیست. سیستم پیام مناسب نشان می‌دهد و همچنان وارد event loop می‌شود. شبکه نیز optional است: نبودن تنظیمات، شکست اتصال Wi-Fi یا timeout در DHCP مانع ورود سیستم به event loop نمی‌شود.
+The final authority for pin assignments is `src/bin/main.rs`.
 
-## ۴. چرا LCD و SD یک SPI مشترک دارند؟
+| Component or signal | ESP32 pin | Purpose |
+|---|---:|---|
+| LCD BL | GPIO22 | Backlight control |
+| LCD RST | GPIO21 | Display reset |
+| LCD DC | GPIO17 | Command/data selection |
+| LCD CS | GPIO5 | LCD chip select |
+| SPI SCK | GPIO18 | Shared SPI clock |
+| SPI MOSI | GPIO23 | Shared controller-to-device data |
+| SPI MISO | GPIO19 | SD-to-controller data |
+| SD CS | GPIO16 | SD card chip select |
+| Backlight button | GPIO32 | Active-low with internal pull-up |
+| LED-mode button | GPIO27 | Active-low with internal pull-up |
+| Blink LED | GPIO25 | Digital LED output |
+| Fade LED A | GPIO26 | First PWM output |
+| Fade LED B | GPIO14 | Complementary PWM output |
+| PCNT input | GPIO33 | Pulse-counter input with internal pull-up |
+| UART0 TX | GPIO1 | Serial output |
+| UART0 RX | GPIO3 | Serial input |
 
-SPI معمولاً این خطوط را دارد:
+Each button is connected between its GPIO and ground. The internal pull-up gives these states:
 
-- SCK: کلاک
-- MOSI: داده از master به slave
-- MISO: داده از slave به master
-- CS: انتخاب دستگاه
+```text
+released -> HIGH
+pressed  -> LOW
+```
 
-LCD و SD سه خط اصلی SPI را شریک هستند، اما هرکدام CS جدا دارند:
+GPIO32 toggles the LCD backlight. GPIO27 advances the LED state machine through `Off -> Blink -> Fade -> Off`.
+
+The SPI clock is intentionally conservative at approximately 1 MHz. Hardware stability takes priority over increasing the bus speed without measurement.
+
+## 3. Boot flow
+
+The entry point is `src/bin/main.rs`, using `#[esp_rtos::main]` with an Embassy `Spawner`. The current boot sequence is:
+
+1. Allocate the heap required by the radio stack.
+2. Initialize the ESP32 at the maximum configured CPU clock.
+3. Configure UART0 for boot and runtime diagnostics.
+4. Install GPIO interrupt support and configure both buttons.
+5. Configure the periodic timer, scheduler support, and LED controller.
+6. Create the shared SPI2 bus.
+7. Create an independent SPI device for the LCD, initialize the display, clear it, flush it, and turn on the backlight.
+8. Create an independent SPI device for the SD card, mount the first FAT volume, display capacity information, and list the root directory.
+9. If credentials exist, initialize Wi-Fi, connect, wait for DHCP, and create the HTTP client.
+10. Configure PCNT unit 0 channel 0 on GPIO33.
+11. Enter the main event loop.
+
+LCD initialization or its initial flush is currently fatal because the display is a central output device. SD and network failures are non-fatal. Missing media, missing credentials, connection failures, and network timeouts are logged, after which the firmware continues into the event loop.
+
+Boot is still sequential. Wi-Fi association and DHCP may delay entry to the main loop, but both waits are bounded.
+
+## 4. Shared SPI architecture
+
+The LCD and SD card share the SPI2 clock and data lines while retaining independent chip-select signals:
 
 ```text
 ESP32 SPI2
- ├── SCK  GPIO18 ── LCD + SD
- ├── MOSI GPIO23 ── LCD + SD
- ├── MISO GPIO19 ── SD
- ├── CS   GPIO5  ── LCD
- └── CS   GPIO16 ── SD
+ |-- SCK  GPIO18 ---- LCD + SD
+ |-- MOSI GPIO23 ---- LCD + SD
+ |-- MISO GPIO19 -------- SD
+ |-- CS   GPIO5  -------- LCD
+ `-- CS   GPIO16 -------- SD
 ```
 
-ماژول `src/spi_bus.rs` خود bus را می‌سازد. سپس `RefCellDevice` برای هر دستگاه یک نمای مستقل می‌سازد.
+`src/spi_bus.rs` constructs the bus. `embedded_hal_bus::spi::RefCellDevice` creates a device view for each peripheral and manages access to the shared bus. Each device transaction asserts only that device's chip select. LCD-specific DC and reset signals remain outside the generic SPI transaction mechanism.
 
-مزیت این روش:
+This design is the result of real hardware bring-up work. Directly giving the bus to one peripheral caused failures when SD support was introduced. Do not replace the shared-device architecture with direct SPI ownership unless the interaction between bus locking, chip select, and both drivers is fully understood and verified on hardware.
 
-- مالکیت مستقیم SPI به یک دستگاه داده نمی‌شود.
-- هنگام transaction فقط CS همان دستگاه فعال می‌شود.
-- LCD و SD بدون خراب‌کردن ارتباط یکدیگر از bus استفاده می‌کنند.
+## 5. Display and framebuffer
 
-نباید `RefCellDevice` را بدون دلیل با مالکیت مستقیم SPI جایگزین کرد؛ خرابی LCD هنگام اضافه‌شدن SD قبلاً یکی از مشکلات واقعی پروژه بوده است.
-
-## ۵. نمایشگر و framebuffer
-
-نمایشگر PCD8544 ابعاد ۸۴×۴۸ دارد و تک‌رنگ است. حافظهٔ لازم:
+The PCD8544 display is 84 pixels wide, 48 pixels high, and monochrome. Its framebuffer occupies:
 
 ```text
-84 × 48 ÷ 8 = 504 bytes
+84 * 48 / 8 = 504 bytes
 ```
 
-کنترلر نمایشگر ارتفاع را به ۶ bank هشت‌پیکسلی تقسیم می‌کند:
+The controller divides the vertical dimension into six banks, each eight pixels high:
 
 ```text
-bank 0 → y = 0..7
-bank 1 → y = 8..15
+bank 0 -> y 0..7
+bank 1 -> y 8..15
 ...
-bank 5 → y = 40..47
+bank 5 -> y 40..47
 ```
 
-فرمول دسترسی به pixel:
+Pixel addressing follows:
 
 ```text
 bank  = y / 8
@@ -139,82 +127,56 @@ index = x + bank * 84
 bit   = y % 8
 ```
 
-برای روشن‌کردن pixel:
+Setting and clearing a pixel are integer bit operations:
 
 ```rust
 buffer[index] |= 1 << bit;
-```
-
-برای خاموش‌کردن آن:
-
-```rust
 buffer[index] &= !(1 << bit);
 ```
 
-### جداسازی رسم از I/O
+### Drawing and I/O separation
 
-`Framebuffer` در `src/screen/framebuffer.rs` فقط دادهٔ RAM را نگه می‌دارد.
+`Framebuffer` in `src/screen/framebuffer.rs` owns the 504-byte RAM image. Drawing operations modify this image only. They do not perform SPI transactions and do not return SPI errors.
 
-توابع زیر فقط framebuffer را تغییر می‌دهند:
-
-- `draw_px`
-- `draw_line`
-- `draw_rect`
-- `draw_round_rect`
-- `draw_circle`
-- `draw_char`
-- `draw_text`
-- `draw_fmt`
-
-آن‌ها transaction مربوط به SPI انجام نمی‌دهند و خطای SPI برنمی‌گردانند.
-
-تنها زمانی که تصویر واقعاً به LCD منتقل می‌شود، فراخوانی زیر است:
+The operations include pixel, line, rectangle, rounded rectangle, circle, filled shape, character, text, and formatted-text drawing. The image is transferred to the LCD only by:
 
 ```rust
 screen.flush()?;
 ```
 
-در حال حاضر `flush()` همیشه هر ۵۰۴ بایت را ارسال می‌کند. dirty-region یا dirty-bank هنوز پیاده‌سازی نشده است؛ این تصمیم فعلاً عمدی است تا رفتار ساده و قابل‌اعتماد بماند.
+`flush()` currently sends the entire framebuffer. A 504-byte full-frame update is an acceptable simplicity and reliability tradeoff at this stage. Dirty-bank or dirty-region rendering should be introduced only after a measured need.
 
-### الگوریتم‌های رسم
+### Drawing algorithms
 
-خط‌ها با الگوریتم Bresenham رسم می‌شوند. این الگوریتم فقط از اعداد صحیح استفاده می‌کند و برای نمایشگر embedded مناسب است. پیاده‌سازی اولیهٔ DDA برای مقایسهٔ آموزشی نوشته شده بود، اما چون به محاسبات floating-point نیاز داشت از مسیر اجرایی و سورس حذف شد؛ این تاریخچه دلیل انتخاب Bresenham را توضیح می‌دهد.
+Lines use Bresenham's integer algorithm. An earlier educational DDA implementation was removed because floating-point slope calculations offer no advantage for this display. Circles and rounded corners use midpoint-style integer algorithms and symmetry. Filled shapes are constructed with integer spans or internal lines.
 
-دایره و گوشه‌های گرد با الگوریتم midpoint و تقارن چندجهته ساخته می‌شوند. filled shapeها نیز با رسم خط‌های داخلی پر می‌شوند.
+### Text rendering
 
-### متن و wrapping
+The ASCII font is stored in `src/screen/font.rs` as columns of glyph bits. `draw_text` renders a string, while `draw_fmt` accepts `format_args!` and supports formatted output without allocating a heap `String`.
 
-فونت ASCII در `src/screen/font.rs` نگهداری می‌شود. هر glyph مجموعه‌ای از ستون‌های بیتی است.
+`ScreenFmtWriter` preserves the starting X coordinate as its line anchor. Text that starts at `(10, 4)` returns to X=10 after explicit newlines and soft wrapping, rather than returning to the left edge.
 
-`draw_text` رشتهٔ معمولی می‌گیرد. `draw_fmt` اجازه می‌دهد از `format_args!` استفاده کنیم و بدون ساختن `String` روی heap متن قالب‌بندی‌شده رسم کنیم.
+### Display module responsibilities
 
-`ScreenFmtWriter` مختصات X اولیه را نگه می‌دارد. بنابراین اگر متن از `(10, 4)` شروع شود، newline و soft wrap نیز به X برابر ۱۰ برمی‌گردند، نه لبهٔ صفر نمایشگر.
+| File | Responsibility |
+|---|---|
+| `commands.rs` | PCD8544 command values |
+| `driver.rs` | SPI and the DC, reset, and backlight pins |
+| `framebuffer.rs` | The 504-byte image and pixel operations |
+| `controller.rs` | Initialization, clear, flush, and backlight control |
+| `drawer_shapes.rs` | Geometric drawing algorithms |
+| `drawer_text.rs` | Character and string rendering |
+| `fmt.rs` | `core::fmt::Write` integration |
+| `font.rs` | ASCII glyph data |
+| `spi.rs` | Display SPI helpers and related types |
 
-## ۶. ساختار درایور نمایشگر
+Hardware initialization necessarily sends contrast, bias, instruction-set, addressing, and display-mode commands. After initialization, ordinary drawing remains a RAM-only operation until `flush()`.
 
-مسئولیت‌ها به این صورت جدا شده‌اند:
+## 6. SD storage
 
-- `commands.rs`: commandهای PCD8544
-- `driver.rs`: SPI، پایه‌های DC/RST و backlight
-- `framebuffer.rs`: آرایهٔ ۵۰۴ بایتی و عملیات pixel
-- `controller.rs`: initialization، clear، flush و کنترل backlight
-- `drawer_shapes.rs`: شکل‌های هندسی
-- `drawer_text.rs`: character و text
-- `fmt.rs`: اتصال `core::fmt::Write` به renderer
-- `font.rs`: دادهٔ فونت ASCII
+`SdStorage` in `src/sd/volume.rs` hides the concrete `SdCard`, `VolumeManager`, volume index, and open-volume lifetime from `main`.
 
-`init()` ناچار است commandهای سخت‌افزاری تنظیم contrast، bias و addressing را ارسال کند. بعد از initialization، مسیرهای رسم فقط RAM را تغییر می‌دهند و I/O تصویر در `flush()` انجام می‌شود.
-
-## ۷. حافظهٔ SD
-
-`SdStorage` در `src/sd/volume.rs` جزئیات این typeها را از `main` پنهان می‌کند:
-
-- `SdCard`
-- `VolumeManager`
-- `VolumeIdx`
-- lifetime مربوط به volume باز
-
-استفادهٔ اصلی:
+A typical mount is:
 
 ```rust
 let storage = SdStorage::new(sd_spi, delay);
@@ -224,37 +186,29 @@ match storage.mount() {
         let bytes = sd.size_bytes();
     }
     Err(SdStorageError::CardNotFound) => {
-        // کارت داخل دستگاه نیست
+        // Continue without removable storage.
     }
     Err(error) => {
-        // خطای واقعی card یا filesystem
+        // Report a transport, partition, or filesystem error.
     }
 }
 ```
 
-`MountedSd` یک handle از نوع RAII است. تا وقتی این مقدار زنده است volume باز می‌ماند و هنگام drop شدن بسته می‌شود.
+`MountedSd` is an RAII handle. The FAT volume remains open only while this value is alive and closes when it is dropped. In the current boot demonstration, the handle lives inside the successful `storage.mount()` match arm, lists the root directory, and is then dropped. A file manager must move `MountedSd` into long-lived application state so the volume remains mounted across the event loop.
 
-در boot فعلی این handle فقط داخل شاخهٔ موفق `match storage.mount()` زنده می‌ماند، root را فهرست می‌کند و سپس drop می‌شود. این رفتار برای demo فعلی درست است؛ file manager باید مالکیت `MountedSd` را به state طولانی‌عمر برنامه منتقل کند تا volume در سراسر event loop mount بماند.
+Storage errors are deliberately distinguished:
 
-### خطاهای SD
+- `CardNotFound`: no card is present or the card was removed.
+- `Card(...)`: an SD protocol or transport error occurred.
+- `Filesystem(...)`: partition, FAT, or filesystem operations failed.
 
-خطاها سه مسیر واضح دارند:
+Errors opening or traversing the root directory are returned to the caller rather than silently ignored.
 
-- `CardNotFound`: کارت وجود ندارد یا هنگام کار جدا شده است.
-- `Card(...)`: خطای protocol/transport کارت.
-- `Filesystem(...)`: مشکل partition، FAT یا عملیات فایل‌سیستم.
+`FixedTimeSource` supplies a constant timestamp required by the FAT library. It is not a real clock; future file writes will have artificial timestamps until an RTC or network-derived time source is added.
 
-خطای بازکردن root و پیمایش directory نیز به caller برگردانده می‌شود و silently ناپدید نمی‌شود.
+## 7. Input, interrupts, and debounce
 
-### زمان جعلی فایل‌سیستم
-
-`FixedTimeSource` فعلاً همیشه یک timestamp ثابت برمی‌گرداند. این برای API کتابخانهٔ FAT لازم است، ولی ساعت واقعی نیست.
-
-در نتیجه timestamp فایل‌هایی که در آینده نوشته شوند واقعی نخواهد بود. تغییر این رفتار به RTC یا زمان شبکه یک کار آینده است.
-
-## ۸. ورودی، interrupt و debounce
-
-API عمومی ورودی در `src/io/input_pins.rs` قرار دارد:
+The public input API in `src/io/input_pins.rs` includes:
 
 ```rust
 setup_backlight_button(pin);
@@ -263,7 +217,7 @@ next_input_event();
 button_is_pressed(ButtonId::Backlight);
 ```
 
-رویدادهای فعلی:
+The event model supports press and release transitions for both buttons:
 
 ```rust
 InputEvent::ButtonPressed(ButtonId::Backlight)
@@ -272,201 +226,192 @@ InputEvent::ButtonReleased(ButtonId::Backlight)
 InputEvent::ButtonReleased(ButtonId::LedMode)
 ```
 
-### چرا فقط خواندن boolean کافی نبود؟
+Events are used instead of polling only the current Boolean level so short transitions are not lost between iterations of the main loop.
 
-اگر برنامه فقط وضعیت فعلی را بخواند، ممکن است یک فشار کوتاه را از دست بدهد. event به برنامه می‌گوید یک transition اتفاق افتاده است، حتی اگر بعداً وضعیت تغییر کند.
+Mechanical contacts can produce several rapid edges for a single physical transition. The current debounce interval is 25 ms and remains non-blocking:
 
-### bounce چیست؟
+1. An any-edge GPIO interrupt runs.
+2. The handler clears the interrupt flag.
+3. It records the latest raw level and edge time.
+4. No delay or heavy work is performed inside the ISR.
+5. `next_input_event()` advances pending debounce state.
+6. After 25 ms without a newer edge, the stable level is accepted.
+7. An event is queued only when the accepted state differs from the previous stable state.
 
-کنتاکت مکانیکی دکمه هنگام فشار یا رهاشدن فوراً پایدار نمی‌شود و ممکن است چند بار تغییر کند:
+Each button has independent state. Accepted events enter a fixed ring buffer with capacity eight, protected by `critical_section` between interrupt and main contexts. The queue uses no heap. If it is full, a new event is dropped without telemetry; overflow reporting is a useful future improvement.
 
-```text
-LOW → HIGH → LOW → HIGH → LOW
-```
+## 8. Main event loop
 
-بدون debounce، یک فشار می‌تواند چند Pressed و Released تولید کند.
-
-### debounce فعلی چگونه کار می‌کند؟
-
-مدت debounce برابر ۲۵ms است.
-
-1. interrupt با هر edge اجرا می‌شود.
-2. handler فقط flag وقفه را پاک می‌کند.
-3. آخرین سطح خام و زمان edge ثبت می‌شود.
-4. هیچ delay داخل ISR انجام نمی‌شود.
-5. `next_input_event()` وضعیت pending را poll می‌کند.
-6. اگر ۲۵ms از آخرین edge گذشته باشد، سطح پایدار پذیرفته می‌شود.
-7. فقط در صورت تغییر نسبت به وضعیت پایدار قبلی event ساخته می‌شود.
-
-هر دکمه state و debounce مستقل دارد. handler مشترک فقط pin دارای interrupt را ثبت می‌کند.
-این روش non-blocking است؛ ISR کوتاه می‌ماند و main loop با `next_input_event()`
-debounce هر دو دکمه را پیش می‌برد.
-
-### صف event
-
-eventهای پذیرفته‌شده داخل یک ring buffer ثابت با ظرفیت ۸ قرار می‌گیرند. این صف heap ندارد و با `critical_section` بین ISR و main محافظت می‌شود.
-
-اگر صف کاملاً پر شود، event جدید فعلاً کنار گذاشته می‌شود. برای دو دکمه و main loop سریع این حالت بعید است، اما در آینده بهتر است overflow counter یا سیاست مشخص‌تری اضافه شود.
-
-## ۹. event loop فعلی
-
-انتهای `main` دیگر یک loop کاملاً خالی نیست:
+The event loop coordinates all active behavior:
 
 ```rust
 loop {
     while let Some(event) = io::next_input_event() {
-        match event {
-            InputEvent::ButtonPressed(ButtonId::Backlight) => {
-                screen.toggle_backlight();
-            }
-            InputEvent::ButtonPressed(ButtonId::LedMode) => {
-                leds.cycle_mode();
-            }
-            InputEvent::ButtonReleased(button) => log(button),
-        }
+        // Toggle the backlight, change LED mode, or log a release.
     }
 
     leds.update();
+    // Log PCNT changes.
+    // Poll the HTTP client when networking is available.
     Timer::after(Duration::from_millis(1)).await;
 }
 ```
 
-دو مسیر event فعلی چنین‌اند:
+The one-millisecond Embassy timer yields execution so the network runner can progress even when no TCP traffic is arriving.
+
+The current event paths are:
 
 ```text
-GPIO32 → interrupt → debounce → event queue → LCD backlight
-GPIO27 → interrupt → debounce → event queue → LedController
+GPIO32 -> interrupt -> debounce -> event queue -> LCD backlight
+GPIO27 -> interrupt -> debounce -> event queue -> LED state machine
 ```
 
-وقتی UI ساخته شود، همین match می‌تواند eventها را به menu، file manager یا application فعال تحویل دهد.
+As the UI grows, the same event stream can be routed to a menu, file manager, or active application rather than handled directly in `main`.
 
-## ۱۰. PWM
+## 9. LEDs, PWM, timer, and pulse counter
 
-ماژول `src/pwm` timer و channel مربوط به LEDC را می‌سازد.
-ماژول `src/leds.rs` لایهٔ رفتاری بالاتر است و حالت‌های Off، Blink و Fade،
-state مربوط به fade و زمان آخرین update را نگه می‌دارد.
+`src/pwm/` configures the ESP32 LEDC timer and channels. `src/leds.rs` adds the higher-level `Off`, `Blink`, and `Fade` state machine, including fade direction and update timing.
 
-`PwmController::set_duty` فقط duty cycle را تنظیم می‌کند:
+`PwmController::set_duty` only changes a duty cycle and intentionally contains no delay. Callers own timing and scheduling:
 
 ```rust
 pwm.set_duty(50);
-```
-
-این تابع عمداً delay ندارد. اگر caller بخواهد duty برای مدتی ثابت بماند، خودش زمان‌بندی را انجام می‌دهد:
-
-```rust
-pwm.set_duty(50);
-// delay یا scheduler در لایهٔ caller
+// The caller or scheduler determines how long this state lasts.
 pwm.off();
 ```
 
-این جداسازی باعث می‌شود درایور PWM ناخواسته CPU و event loop را متوقف نکند.
+This prevents a hardware setter from unexpectedly blocking the CPU or event loop. GPIO26 and GPIO14 form the complementary fade pair; GPIO25 is the digital blink output.
 
-## ۱۱. timer
+`src/timer/` configures a periodic hardware timer. Its interrupt handler clears the interrupt and increments an atomic counter. It is a focused experiment in periodic interrupts and atomic communication, not a general-purpose scheduler abstraction.
 
-ماژول `src/timer` یک `PeriodicTimer` می‌سازد. handler وقفه را پاک می‌کند و یک counter اتمیک را افزایش می‌دهد.
+PCNT unit 0 channel 0 counts configured edges on GPIO33. The main loop compares the current value with the last reported value and logs changes over UART.
 
-این timer فعلاً یک abstraction عمومی scheduler یا task runtime نیست؛ فقط یک نمونهٔ ساده برای فهم interrupt دوره‌ای و شمارندهٔ اتمیک است.
+## 10. UART and error reporting
 
-## ۱۲. UART و گزارش خطا
+UART0 uses GPIO1 and GPIO3. It is the primary diagnostic channel for initialization results, SD directory entries, button events, PCNT values, and network activity.
 
-UART0 با GPIO1 و GPIO3 ساخته می‌شود. در boot، نتیجهٔ initialization نمایشگر، mount کارت و eventهای دکمه روی UART نوشته می‌شوند.
+The LCD is reserved for concise user-facing status. Detailed errors normally go to UART. The panic handler currently spins indefinitely and does not print panic information, so explicit error logging before fatal loops remains important.
 
-UART در این پروژه ابزار اصلی مشاهدهٔ رفتار داخلی است. روی نمایشگر فقط پیام‌های مناسب کاربر نمایش داده می‌شود؛ جزئیات فنی خطا معمولاً روی UART قرار می‌گیرند.
+## 11. Wi-Fi and networking
 
-## ۱۳. شبکه و تنظیمات محلی
-
-SSID و رمز Wi-Fi در repository نگهداری نمی‌شوند. آن‌ها هنگام build از environment خوانده می‌شوند:
+Credentials are read at compile time:
 
 ```bash
-ESP_START_WIFI_SSID='your-ssid' ESP_START_WIFI_PASSWORD='your-password' cargo build
-```
-
-اگر `ESP_START_WIFI_SSID` تنظیم نشده باشد، boot شبکه را رد می‌کند و سیستم offline ادامه می‌دهد. اتصال Wi-Fi، دریافت DHCP و اتصال TCP timeout صریح دارند. HTTP client پس از قطع اتصال با فاصلهٔ زمانی محدود دوباره تلاش می‌کند.
-
-bufferهای RX/TX فعلاً `StaticCell`های singleton هستند؛ بنابراین پیاده‌سازی کنونی عمداً تنها یک TCP socket می‌سازد. قبل از پشتیبانی از چند network application باید pool یا مالکیت جداگانهٔ bufferها طراحی شود. HTTP parser کامل، TLS و مدیریت چند request هنوز پیاده‌سازی نشده‌اند.
-
-## ۱۴. نقشهٔ فایل‌ها
-
-| مسیر | مسئولیت |
-|---|---|
-| `src/bin/main.rs` | boot، اتصال subsystemها و event loop |
-| `src/spi_bus.rs` | ساخت SPI2 مشترک |
-| `src/screen/` | درایور، framebuffer، graphics و text |
-| `src/sd/` | SD card، FAT volume و time source |
-| `src/io/` | pin config، GPIO interrupt، debounce و input events |
-| `src/leds.rs` | state machine مربوط به Off، Blink و Fade |
-| `src/pwm/` | تنظیم LEDC PWM |
-| `src/timer/` | timer دوره‌ای و شمارنده |
-| `src/net/` | Wi-Fi network stack، TCP client و polling پاسخ |
-| `src/com/uart.rs` | UART0 |
-| `src/utils.rs` | delay سادهٔ busy-wait |
-| `src/lib.rs` | export ماژول‌های کتابخانه |
-
-## ۱۵. build و اجرا
-
-بررسی قالب‌بندی:
-
-```bash
-cargo fmt --check
-```
-
-بررسی typeها و compilation بدون لینک نهایی:
-
-```bash
-cargo check
-```
-
-بررسی warningها:
-
-```bash
-cargo clippy --all-targets --all-features -- -D warnings
-```
-
-ساخت firmware:
-
-```bash
+ESP_START_WIFI_SSID='your-ssid' \
+ESP_START_WIFI_PASSWORD='your-password' \
 cargo build
 ```
 
-فلش و monitor:
+They must not be stored in source control. If the SSID is absent, network setup is skipped. Password is optional for an open network.
+
+The network path:
+
+1. Initializes the ESP radio and station interface.
+2. Applies the station configuration.
+3. Creates an `embassy-net` stack using DHCPv4.
+4. Spawns the network runner task.
+5. Associates with the access point.
+6. Waits for a usable IPv4 configuration.
+7. Creates one TCP socket, connects to the configured endpoint, and sends the static request.
+8. Polls response chunks from the main event loop.
+
+Failure remains non-fatal and all long waits are bounded:
+
+| Operation | Timeout or interval |
+|---|---:|
+| Wi-Fi association | 20 seconds |
+| DHCP configuration | 15 seconds |
+| TCP connection | 10 seconds |
+| TCP read polling | 10 milliseconds maximum per poll |
+| Reconnect after failure or closure | 5 seconds |
+
+`HttpClient` retains the endpoint and a `&'static [u8]` request so it can reconnect and resend. The current request asks for `Connection: close`, so an ordinary server close schedules that request again after five seconds. This policy is safe only for idempotent endpoints.
+
+RX and TX storage are singleton `StaticCell<[u8; 1024]>` buffers. Consequently, the present architecture supports exactly one `TcpSocket`, even though the network stack itself has multiple socket resources. Supporting multiple network applications requires a buffer pool or explicit independent buffer ownership.
+
+The response buffer is 512 bytes. Chunks are logged only when they are valid UTF-8. There is no complete HTTP parser, response assembly, TLS, or general service layer yet.
+
+## 12. Source map
+
+| Path | Responsibility |
+|---|---|
+| `src/bin/main.rs` | Boot, subsystem integration, and the main loop |
+| `src/runtime.rs` | Heap allocation and scheduler/runtime setup |
+| `src/spi_bus.rs` | Shared SPI2 construction |
+| `src/screen/` | Display driver, framebuffer, graphics, and text |
+| `src/sd/` | SD card access, FAT volume, and time source |
+| `src/io/` | Pin configuration, GPIO interrupts, debounce, and input events |
+| `src/leds.rs` | LED mode state machine |
+| `src/pwm/` | LEDC PWM setup and control |
+| `src/timer/` | Periodic timer and counter state |
+| `src/pcnt/` | Pulse-counter channel configuration |
+| `src/wifi/` | Radio initialization, station configuration, scanning, and association |
+| `src/net/` | Embassy network stack, runner, TCP socket, and HTTP client |
+| `src/com/uart.rs` | UART0 construction |
+| `src/utils.rs` | Small utility functions, including network seed generation |
+| `src/lib.rs` | Library module exports |
+
+## 13. Toolchain, build, and execution
+
+The project targets the Xtensa-based classic ESP32 using the ESP Rust toolchain. Dependency versions in `Cargo.toml` and `Cargo.lock` are authoritative; examples for older `esp-hal`, `esp-radio`, Embassy, or `embedded-hal` releases may not match the installed APIs.
+
+Activate the toolchain environment generated by `espup` before linking. A failure that only reports a missing `xtensa-esp32-elf-gcc` usually means the export script was not sourced.
+
+Run the full quality gate:
+
+```bash
+cargo fmt --all -- --check
+cargo check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo build
+```
+
+Flash and monitor a debug build with:
 
 ```bash
 espflash flash --monitor target/xtensa-esp32-none-elf/debug/esp-start
 ```
 
-## ۱۶. اصول ادامهٔ توسعه
+JetBrains `.idea/` files are machine-specific and intentionally excluded from version control.
 
-هنگام تغییر پروژه این قواعد مفیدند:
+## 14. Development principles
 
-1. ابتدا correctness و پایداری سخت‌افزار را حفظ کن.
-2. SPI مشترک و CS مستقل دستگاه‌ها را دست‌کم نگیر.
-3. drawing را از hardware I/O جدا نگه دار.
-4. داخل ISR کار طولانی، allocation، log سنگین یا delay انجام نده.
-5. خطای SD را با نبودن کارت یکی نکن.
-6. timing را در caller یا scheduler نگه دار، نه داخل setterهای سخت‌افزار.
-7. قبل از استفاده از مثال‌های اینترنتی، نسخه‌های واقعی `Cargo.toml` و `Cargo.lock` را بررسی کن.
-8. بعد از هر تغییر `fmt`، `check` و `clippy` را اجرا کن.
+1. Preserve correctness and known hardware stability before optimizing.
+2. Treat the shared SPI bus and independent chip-select behavior as architectural constraints.
+3. Keep framebuffer drawing separate from hardware image transfer.
+4. Keep ISRs short: no blocking delays, allocation, or heavy logging.
+5. Distinguish missing removable media from transport and filesystem failures.
+6. Keep timing in callers or schedulers rather than inside hardware setters.
+7. Prefer bounded asynchronous waits over infinite boot-time waits.
+8. Prefer fixed-size buffers with explicit ownership.
+9. Prefer integer embedded algorithms such as Bresenham and midpoint drawing over floating point.
+10. Verify dependency versions and installed APIs before applying examples from the internet.
+11. Measure before adding dirty rendering, more complex scheduling, or other optimizations.
+12. Keep `README.md`, this document, and actual source behavior synchronized.
 
-## ۱۷. محدودیت‌ها و قدم‌های بعدی
+## 15. Current limitations and next milestones
 
-مواردی که هنوز عمداً ساده هستند:
+The following limitations are intentional or not yet addressed:
 
-- `flush()` کل framebuffer را می‌فرستد.
-- event queue فقط ۸ خانه دارد و overflow report ندارد.
-- فعلاً دو دکمهٔ اختصاصی تعریف شده‌اند و هنوز navigation کامل نداریم.
-- timestamp مربوط به SD ثابت و جعلی است.
-- main loop هنوز sleep یا power management ندارد.
-- UI manager و routing رویداد میان applicationها ساخته نشده است.
-- keyboard نهایی هنوز انتخاب نشده است.
-- شبکه فعلاً یک TCP socket با bufferهای singleton دارد و HTTP client هنوز parser کامل یا TLS ندارد.
-- `MountedSd` در boot پس از root listing drop می‌شود و file manager باید آن را در state برنامه نگه دارد.
+- Every LCD flush transfers all 504 framebuffer bytes.
+- The input queue holds eight events and exposes no overflow counter.
+- Two dedicated buttons exist, but there is no general navigation input model.
+- FAT timestamps come from a fixed artificial time source.
+- `MountedSd` is dropped after the boot-time root listing.
+- There is no UI manager or application-level event router.
+- A final keyboard or richer input device has not been selected.
+- Networking uses one TCP socket with singleton buffers.
+- The HTTP client has no complete parser, response assembly, or TLS.
+- The server endpoint and HTTP request are compile-time constants in `main`.
+- The main loop has no explicit power-management strategy.
 
-قدم‌های منطقی آینده:
+The next coherent milestone is a primitive file manager. It should:
 
-1. نمایش یک menu ساده با دکمه.
-2. تعریف actionهایی مثل Up، Down، Select و Back.
-3. جداکردن event dispatch از `main` وقتی تعداد screenها بیشتر شد.
-4. ساخت file browser روی `MountedSd`.
-5. اضافه‌کردن overflow telemetry برای input queue.
-6. بررسی dirty-bank flushing فقط زمانی که نیاز عملکردی واقعی دیده شد.
+1. Move `MountedSd` into long-lived application state.
+2. Define navigation actions such as Up, Down, Select, and Back.
+3. Add a small menu or screen model.
+4. Route input events outside `main` as the number of screens grows.
+5. Browse directory entries and display them using the existing text renderer.
+6. Add input-queue overflow telemetry.
+
+Dirty-bank display updates, keyboard hardware, USB host support, TLS, multi-socket networking, and a full UI framework should remain outside that milestone unless a concrete requirement makes them necessary.

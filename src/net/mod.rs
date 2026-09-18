@@ -31,7 +31,7 @@ pub struct WifiNetwork {
 impl WifiNetwork {
     pub async fn connect(
         wifi_peripheral: WIFI<'static>,
-        spawner: Spawner,
+        spawner: &Spawner,
         ssid: &str,
         password: Option<&str>,
         uart: &mut Uart<'static, Blocking>,
@@ -50,7 +50,7 @@ impl WifiNetwork {
         }
 
         let (stack, runner) = setup(station);
-        runner::run_wifi_net_task(spawner, runner);
+        runner::run_wifi_net_task(&spawner, runner);
         uart.write_str("SUCCESS\r\n[WIFI] Connecting ...\r\n")
             .unwrap();
 

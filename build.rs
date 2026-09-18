@@ -1,6 +1,16 @@
 fn main() {
     linker_be_nice();
-    // make sure linkall.x is the last linker script (otherwise might cause problems with flip-link)
+
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR missing");
+
+    println!("cargo:rerun-if-changed=rom-bt.x");
+
+    // Our missing ESP32 Bluetooth ROM symbols.
+    println!("cargo:rustc-link-search={manifest_dir}");
+    println!("cargo:rustc-link-arg=-Trom-bt.x");
+
+    // IMPORTANT:
+    // linkall.x must remain the last linker script.
     println!("cargo:rustc-link-arg=-Tlinkall.x");
 }
 

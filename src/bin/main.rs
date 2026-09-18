@@ -21,7 +21,7 @@ use esp_start::leds::{LedController, UPDATE_INTERVAL_MS};
 use esp_start::net::{HttpClient, WifiNetwork};
 use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
 use esp_start::sd::{SdStorage, SdStorageError};
-use esp_start::{pcnt, runtime, spi_bus, timer};
+use esp_start::{bluetooth, pcnt, runtime, spi_bus, timer};
 
 const WIFI_SSID: Option<&str> = option_env!("ESP_START_WIFI_SSID");
 const WIFI_PASSWORD: Option<&str> = option_env!("ESP_START_WIFI_PASSWORD");
@@ -49,19 +49,20 @@ async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(config);
     let mut uart = uart::setup(peripherals.UART0, peripherals.GPIO1, peripherals.GPIO3);
 
-    // --- Input and scheduling ---
+    // --- IO ---
     io::setup(peripherals.IO_MUX);
     io::setup_backlight_button(peripherals.GPIO32);
     io::setup_led_mode_button(peripherals.GPIO27);
-    uart.write_str("[INPUT] Backlight button ready on GPIO32\r\n")
+    uart.write_str("[INPUT] Backlight button ready\r\n")
         .unwrap();
-    uart.write_str("[INPUT] LED mode button ready on GPIO27\r\n")
-        .unwrap();
+    uart.write_str("[INPUT] LED mode button ready\r\n").unwrap();
 
+    // --- Scheduling ---
     let timer_group = TimerGroup::new(peripherals.TIMG0);
     timer::setup(timer_group.timer0, UPDATE_INTERVAL_MS);
     runtime::setup_scheduler(peripherals.FROM_CPU_INTR0, timer_group.timer1);
 
+    // --- LEDs ---
     // GPIO25 blinks. GPIO26 and GPIO14 are the complementary PWM fade pair.
     let mut leds = LedController::new(
         peripherals.LEDC,
@@ -69,6 +70,9 @@ async fn main(spawner: Spawner) -> ! {
         peripherals.GPIO26,
         peripherals.GPIO14,
     );
+
+    // --- Bluetooth ---
+    bluetooth::run_bt_scan_task(&spawner, peripherals.BT);
 
     // --- Shared SPI bus ---
     let spi_bus = spi_bus::setup(
@@ -164,7 +168,7 @@ async fn main(spawner: Spawner) -> ! {
     // --- Wi-Fi and HTTP ---
     let wifi_network = match WIFI_SSID {
         Some(ssid) => {
-            WifiNetwork::connect(peripherals.WIFI, spawner, ssid, WIFI_PASSWORD, &mut uart).await
+            WifiNetwork::connect(peripherals.WIFI, &spawner, ssid, WIFI_PASSWORD, &mut uart).await
         }
         None => {
             uart.write_str("[WIFI] Skipped: ESP_START_WIFI_SSID is not set\r\n")
@@ -214,6 +218,10 @@ async fn main(spawner: Spawner) -> ! {
                     writeln!(uart, "[INPUT] {button:?} button released").unwrap();
                 }
             }
+        }
+
+        while let Some(result) = bluetooth::next_scan_result() {
+            writeln!(uart, "[BLE] Discovered: {:?}", result.address).unwrap();
         }
 
         leds.update();

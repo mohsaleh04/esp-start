@@ -72,7 +72,9 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     // --- Bluetooth ---
+    uart.write_str("[BLE] Initializing ... ").unwrap();
     bluetooth::run_bt_scan_task(&spawner, peripherals.BT);
+    uart.write_str("SUCCESS\r\n").unwrap();
 
     // --- Shared SPI bus ---
     let spi_bus = spi_bus::setup(

@@ -44,8 +44,8 @@ pub(super) fn push_scan_result(result: ScannerResult) {
     });
 }
 
-pub(super) async fn run(bt_preph: BT<'static>) {
-    let connector = BleConnector::new(bt_preph, Default::default()).unwrap();
+pub(super) async fn run(bt: BT<'static>) {
+    let connector = BleConnector::new(bt, Default::default()).unwrap();
     let controller: ExternalController<_, 1> = ExternalController::new(connector);
 
     run_scanner(controller).await;

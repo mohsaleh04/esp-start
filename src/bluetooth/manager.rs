@@ -8,8 +8,8 @@ pub struct BluetoothManager {
 }
 
 impl BluetoothManager {
-    pub fn init(preph: BT<'static>, spawner: &Spawner) -> Self {
-        bluetooth::run_bt_scan_task(&spawner, preph);
+    pub fn init(bt: BT<'static>, spawner: &Spawner) -> Self {
+        bluetooth::run_bt_scan_task(spawner, bt);
         Self {
             devices: DeviceRegistry::new(),
         }

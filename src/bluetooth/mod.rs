@@ -10,3 +10,6 @@ mod advertisement;
 mod models;
 mod registry;
 mod manager;
+mod advertiser;
+
+const DEFAULT_DISCOVERABLE_NAME: &[u8] = b"Saleh's esp-start";

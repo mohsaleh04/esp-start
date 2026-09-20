@@ -1,9 +1,9 @@
 use crate::bluetooth::advertisement::handler::AdvertisementHandler;
-use crate::bluetooth::scanner;
+use crate::bluetooth::{advertiser, scanner};
 use bt_hci::cmd::le::LeSetScanParams;
 use bt_hci::controller::{ControllerCmdSync, ExternalController};
 use embassy_executor::Spawner;
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{select3, Either3};
 use esp_hal::peripherals::BT;
 use esp_radio::ble::controller::BleConnector;
 use trouble_host::prelude::DefaultPacketPool;
@@ -31,9 +31,7 @@ pub(super) async fn run(bt: BT<'static>) {
 }
 
 async fn runner<C>(controller: C)
-where
-    C: Controller + ControllerCmdSync<LeSetScanParams>,
-{
+where C: Controller + ControllerCmdSync<LeSetScanParams> {
     let mut resources: HostResources<_, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
         HostResources::new();
 
@@ -43,18 +41,23 @@ where
         .build();
 
     let mut stack_runner = stack.runner();
-    let central = stack.central();
+    let stack_central = stack.central();
+    let stack_peripheral = stack.peripheral();
     let handler = AdvertisementHandler::new();
 
-    match select(
+    match select3(
         stack_runner.run_with_handler(&handler),
-        scanner::run(central),
+        scanner::run(stack_central),
+        advertiser::run(stack_peripheral)
     ).await {
-        Either::First(result) => {
+        Either3::First(result) => {
             result.expect("Bluetooth stack runner failed");
         }
-        Either::Second(_) => {
+        Either3::Second(_) => {
             panic!("BLE scanner stopped unexpectedly");
+        }
+        Either3::Third(_) => {
+            panic!("BLE advertiser stopped unexpectedly");
         }
     }
 }

@@ -14,7 +14,7 @@ use esp_radio::ble::controller::BleConnector;
 use heapless::Deque;
 use trouble_host::prelude::*;
 use trouble_host::scan::Scanner;
-use crate::bluetooth::advertisement::AdvertisementHandler;
+use crate::bluetooth::adv_handler::AdvertisementHandler;
 
 const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 1;
@@ -24,6 +24,9 @@ static RESULTS: Mutex<RefCell<Deque<ScannerResult, 32>>> = Mutex::new(RefCell::n
 #[derive(Clone, Copy, Debug)]
 pub struct ScannerResult {
     pub address: BdAddr,
+    pub rssi: i8,
+    pub data_len: usize,
+    pub data: [u8; 32],
 }
 
 pub fn next_scan_result() -> Option<ScannerResult> {
@@ -41,8 +44,8 @@ pub(super) fn push_scan_result(result: ScannerResult) {
     });
 }
 
-pub(super) async fn run(bluetooth: BT<'static>) {
-    let connector = BleConnector::new(bluetooth, Default::default()).unwrap();
+pub(super) async fn run(bt_preph: BT<'static>) {
+    let connector = BleConnector::new(bt_preph, Default::default()).unwrap();
     let controller: ExternalController<_, 1> = ExternalController::new(connector);
 
     run_scanner(controller).await;

@@ -21,7 +21,8 @@ use esp_start::leds::{LedController, UPDATE_INTERVAL_MS};
 use esp_start::net::{HttpClient, WifiNetwork};
 use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
 use esp_start::sd::{SdStorage, SdStorageError};
-use esp_start::{bluetooth, pcnt, runtime, spi_bus, timer};
+use esp_start::{pcnt, runtime, spi_bus, timer};
+use esp_start::bluetooth::BluetoothManager;
 
 const WIFI_SSID: Option<&str> = option_env!("ESP_START_WIFI_SSID");
 const WIFI_PASSWORD: Option<&str> = option_env!("ESP_START_WIFI_PASSWORD");
@@ -73,7 +74,7 @@ async fn main(spawner: Spawner) -> ! {
 
     // --- Bluetooth ---
     uart.write_str("[BLE] Initializing ... ").unwrap();
-    bluetooth::run_bt_scan_task(&spawner, peripherals.BT);
+    let mut bluetooth = BluetoothManager::init(peripherals.BT, &spawner);
     uart.write_str("SUCCESS\r\n").unwrap();
 
     // --- Shared SPI bus ---
@@ -222,8 +223,8 @@ async fn main(spawner: Spawner) -> ! {
             }
         }
 
-        while let Some(result) = bluetooth::next_scan_result() {
-            writeln!(uart, "[BLE] Discovered: {:?}", result.address).unwrap();
+        if bluetooth.poll() {
+            writeln!(uart, "[BLE] Discovered Devices: {:?}\r\n", bluetooth.devices()).unwrap();
         }
 
         leds.update();

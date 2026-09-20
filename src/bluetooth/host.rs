@@ -1,4 +1,4 @@
-use crate::bluetooth::adv_handler::AdvertisementHandler;
+use crate::bluetooth::advertisement::handler::AdvertisementHandler;
 use crate::bluetooth::scanner;
 use bt_hci::cmd::le::LeSetScanParams;
 use bt_hci::controller::{ControllerCmdSync, ExternalController};

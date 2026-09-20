@@ -8,6 +8,5 @@ mod scanner;
 mod host;
 mod advertisement;
 mod models;
-mod adv_handler;
 mod registry;
 mod manager;

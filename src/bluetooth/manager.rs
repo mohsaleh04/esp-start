@@ -1,7 +1,6 @@
 use embassy_executor::Spawner;
-use crate::bluetooth::{DeviceRegistry, advertisement, scanner};
+use crate::bluetooth::{DeviceRegistry, advertisement, scanner, run_bt_scan_task};
 use esp_hal::peripherals::BT;
-use crate::bluetooth;
 
 pub struct BluetoothManager {
     devices: DeviceRegistry,
@@ -9,7 +8,7 @@ pub struct BluetoothManager {
 
 impl BluetoothManager {
     pub fn init(bt: BT<'static>, spawner: &Spawner) -> Self {
-        bluetooth::run_bt_scan_task(spawner, bt);
+        run_bt_scan_task(spawner, bt);
         Self {
             devices: DeviceRegistry::new(),
         }

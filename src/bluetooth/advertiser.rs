@@ -1,4 +1,4 @@
-use crate::bluetooth::DEFAULT_DISCOVERABLE_NAME;
+use crate::bluetooth::{event, BluetoothEvent, config::DEFAULT_DISCOVERABLE_NAME};
 use core::future;
 use trouble_host::Controller;
 use trouble_host::peripheral::Peripheral;
@@ -23,12 +23,15 @@ where C: Controller {
                 scan_data: &[],
             },
         ).await.expect("Failed to start BLE advertising");
+
     let connection = advertiser.accept()
         .await.expect("Failed to accept BLE connection");
+    event::push(BluetoothEvent::Connected);
 
-    // if connection.is_connected() {
-    //     connection.disconnect();
-    // }
+    if connection.is_connected() {
+        connection.disconnect();
+        event::push(BluetoothEvent::Disconnected);
+    }
 
     future::pending::<()>().await;
 }

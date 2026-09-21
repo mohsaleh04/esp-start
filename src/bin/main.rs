@@ -22,7 +22,7 @@ use esp_start::net::{HttpClient, WifiNetwork};
 use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
 use esp_start::sd::{SdStorage, SdStorageError};
 use esp_start::{pcnt, runtime, spi_bus, timer};
-use esp_start::bluetooth::BluetoothManager;
+use esp_start::bluetooth::{BluetoothManager, BluetoothEvent};
 
 const WIFI_SSID: Option<&str> = option_env!("ESP_START_WIFI_SSID");
 const WIFI_PASSWORD: Option<&str> = option_env!("ESP_START_WIFI_PASSWORD");
@@ -72,7 +72,7 @@ async fn main(spawner: Spawner) -> ! {
         peripherals.GPIO14,
     );
 
-    // --- Bluetooth ---
+    // --- Bluetooth (BLE) ---
     uart.write_str("[BLE] Initializing ... ").unwrap();
     let mut bluetooth = BluetoothManager::init(peripherals.BT, &spawner);
     uart.write_str("SUCCESS\r\n").unwrap();
@@ -223,6 +223,17 @@ async fn main(spawner: Spawner) -> ! {
             }
         }
 
+        while let Some(event) = bluetooth.next_event() {
+            match event {
+                BluetoothEvent::Connected => {
+                    writeln!(uart, "[BLE] Connected").unwrap();
+                }
+                BluetoothEvent::Disconnected => {
+                    writeln!(uart, "[BLE] Disconnected").unwrap();
+                }
+            }
+        }
+
         if bluetooth.poll() {
             writeln!(uart, "[BLE] Discovered Devices: {:?}\r\n", bluetooth.devices()).unwrap();
         }
@@ -239,7 +250,6 @@ async fn main(spawner: Spawner) -> ! {
             client.poll(&mut uart).await;
         }
 
-        // Yield so the Embassy network runner can execute even with no TCP traffic.
         Timer::after(Duration::from_millis(1)).await;
     }
 }

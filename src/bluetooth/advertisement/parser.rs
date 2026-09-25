@@ -1,6 +1,7 @@
 use crate::bluetooth::advertisement::AdvertisementData;
 use crate::bluetooth::advertisement::models::AdvertisementType;
 use crate::bluetooth::scanner::ScannerResult;
+
 pub fn parse_advertisement_data(result: &ScannerResult) -> AdvertisementData {
     let data = &result.data[..result.data_len];
     let mut index = 0;

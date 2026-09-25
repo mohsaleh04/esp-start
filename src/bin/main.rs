@@ -15,6 +15,7 @@ use esp_hal::delay::Delay;
 use esp_hal::pcnt::Pcnt;
 use esp_hal::pcnt::channel::EdgeMode;
 use esp_hal::timer::timg::TimerGroup;
+use esp_start::bluetooth::{BluetoothEvent, BluetoothManager};
 use esp_start::com::uart;
 use esp_start::io::{self, ButtonId, InputEvent, PinConfig, ScreenOutPins, SdOutPins};
 use esp_start::leds::{LedController, UPDATE_INTERVAL_MS};
@@ -22,7 +23,6 @@ use esp_start::net::{HttpClient, WifiNetwork};
 use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
 use esp_start::sd::{SdStorage, SdStorageError};
 use esp_start::{pcnt, runtime, spi_bus, timer};
-use esp_start::bluetooth::{BluetoothManager, BluetoothEvent};
 
 const WIFI_SSID: Option<&str> = option_env!("ESP_START_WIFI_SSID");
 const WIFI_PASSWORD: Option<&str> = option_env!("ESP_START_WIFI_PASSWORD");
@@ -231,11 +231,24 @@ async fn main(spawner: Spawner) -> ! {
                 BluetoothEvent::Disconnected => {
                     writeln!(uart, "[BLE] Disconnected").unwrap();
                 }
+                BluetoothEvent::DataReceived { len, data } => {
+                    let payload = &data[..len];
+                    if let Ok(text) = str::from_utf8(payload) {
+                        writeln!(uart, "[BLE] RX: {text}").unwrap();
+                    } else {
+                        writeln!(uart, "[BLE] RX bytes: {:02x?}", payload).unwrap();
+                    }
+                }
             }
         }
 
         if bluetooth.poll() {
-            writeln!(uart, "[BLE] Discovered Devices: {:?}\r\n", bluetooth.devices()).unwrap();
+            writeln!(
+                uart,
+                "[BLE] Discovered Devices: {:?}\r\n",
+                bluetooth.devices()
+            )
+            .unwrap();
         }
 
         leds.update();

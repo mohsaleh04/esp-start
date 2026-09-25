@@ -1,9 +1,9 @@
-use core::cell::RefCell;
-use bt_hci::param::{BdAddr, LeAdvReportsIter};
-use heapless::Deque;
-use trouble_host::prelude::EventHandler;
 use crate::bluetooth::scanner;
 use crate::bluetooth::scanner::ScannerResult;
+use bt_hci::param::{BdAddr, LeAdvReportsIter};
+use core::cell::RefCell;
+use heapless::Deque;
+use trouble_host::prelude::EventHandler;
 
 pub struct AdvertisementHandler {
     seen: RefCell<Deque<BdAddr, 128>>,
@@ -12,7 +12,7 @@ pub struct AdvertisementHandler {
 impl AdvertisementHandler {
     pub fn new() -> Self {
         Self {
-            seen: RefCell::new(Deque::new())
+            seen: RefCell::new(Deque::new()),
         }
     }
 }
@@ -30,7 +30,7 @@ impl EventHandler for AdvertisementHandler {
                 address: report.addr,
                 rssi: report.rssi,
                 data,
-                data_len: report.data.len()
+                data_len: report.data.len(),
             });
 
             if seen.is_full() {

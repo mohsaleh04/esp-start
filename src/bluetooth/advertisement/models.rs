@@ -10,7 +10,7 @@ impl AdvertisementData {
         Self {
             flags: None,
             local_name: None,
-            tx_power: None
+            tx_power: None,
         }
     }
 

@@ -1,16 +1,17 @@
-pub use scanner::next_scan_result;
-pub use host::run_bt_host;
 pub use advertisement::parse_advertisement_data;
-pub use registry::DeviceRegistry;
-pub use manager::BluetoothManager;
 pub use event::BluetoothEvent;
+pub use host::run_bt_host;
+pub use manager::BluetoothManager;
+pub use registry::DeviceRegistry;
+pub use scanner::next_scan_result;
 
-mod scanner;
-mod host;
 mod advertisement;
-mod models;
-mod registry;
-mod manager;
 mod advertiser;
-mod event;
 mod config;
+mod device;
+mod event;
+mod gatt;
+mod host;
+mod manager;
+mod registry;
+mod scanner;

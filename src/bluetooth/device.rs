@@ -1,5 +1,5 @@
-use bt_hci::param::BdAddr;
 use crate::bluetooth::advertisement::AdvertisementData;
+use bt_hci::param::BdAddr;
 
 #[derive(Debug, Clone)]
 pub struct BleDevice {

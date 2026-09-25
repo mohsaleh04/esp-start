@@ -57,7 +57,9 @@ impl WifiNetwork {
         match with_timeout(
             WIFI_CONNECT_TIMEOUT,
             wifi::connection::connect(&mut controller, uart),
-        ).await {
+        )
+        .await
+        {
             Ok(true) => {}
             Ok(false) => return None,
             Err(_) => {

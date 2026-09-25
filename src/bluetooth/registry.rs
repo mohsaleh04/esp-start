@@ -1,5 +1,5 @@
 use crate::bluetooth::advertisement::AdvertisementData;
-use crate::bluetooth::models::BleDevice;
+use crate::bluetooth::device::BleDevice;
 use bt_hci::param::BdAddr;
 
 #[derive(Debug, Clone)]
@@ -15,9 +15,11 @@ impl DeviceRegistry {
     }
 
     pub fn update(&mut self, address: BdAddr, rssi: i8, adv: AdvertisementData) -> bool {
-        if let Some(device) = self.devices.iter_mut()
-            .find(|device| device.address.raw() == address.raw()) {
-
+        if let Some(device) = self
+            .devices
+            .iter_mut()
+            .find(|device| device.address.raw() == address.raw())
+        {
             let result_rssi = device.rssi.wrapping_sub(rssi).abs() >= 12;
             device.rssi = rssi;
 

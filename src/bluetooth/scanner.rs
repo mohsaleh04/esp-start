@@ -1,6 +1,6 @@
-use core::{future, cell::RefCell};
 use bt_hci::cmd::le::LeSetScanParams;
 use bt_hci::controller::ControllerCmdSync;
+use core::{cell::RefCell, future};
 use critical_section::Mutex;
 use embassy_time::Duration;
 use heapless::Deque;
@@ -27,12 +27,16 @@ pub(super) fn push_scan_result(result: ScannerResult) {
             queue.pop_front();
         }
 
-        queue.push_back(result).expect("Failed to push BT scan result!");
+        queue
+            .push_back(result)
+            .expect("Failed to push BT scan result!");
     });
 }
 
 pub(super) async fn run<C>(central: Central<'_, C, DefaultPacketPool>)
-where C: Controller + ControllerCmdSync<LeSetScanParams> {
+where
+    C: Controller + ControllerCmdSync<LeSetScanParams>,
+{
     let mut scanner = Scanner::new(central);
     let mut config = ScanConfig::default();
 

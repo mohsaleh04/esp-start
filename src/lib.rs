@@ -1,6 +1,7 @@
 #![no_std]
 extern crate alloc;
 
+pub mod bluetooth;
 pub mod com;
 pub mod io;
 pub mod leds;
@@ -14,4 +15,3 @@ pub mod spi_bus;
 pub mod timer;
 pub mod utils;
 pub mod wifi;
-pub mod bluetooth;

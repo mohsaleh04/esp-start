@@ -1,4 +1,6 @@
-use crate::bluetooth::{DeviceRegistry, advertisement, run_bt_host, scanner, event, BluetoothEvent};
+use crate::bluetooth::{
+    BluetoothEvent, DeviceRegistry, advertisement, event, run_bt_host, scanner,
+};
 use embassy_executor::Spawner;
 use esp_hal::peripherals::BT;
 

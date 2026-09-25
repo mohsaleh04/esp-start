@@ -2,13 +2,14 @@ use core::cell::RefCell;
 use critical_section::Mutex;
 use heapless::Deque;
 
+const EVENT_QUEUE_SIZE: usize = 8;
+
 #[derive(Debug, Clone, Copy)]
 pub enum BluetoothEvent {
     Connected,
     Disconnected,
+    DataReceived { len: usize, data: [u8; 32] },
 }
-
-const EVENT_QUEUE_SIZE: usize = 8;
 
 static EVENT_QUEUE: Mutex<RefCell<Deque<BluetoothEvent, EVENT_QUEUE_SIZE>>> =
     Mutex::new(RefCell::new(Deque::new()));

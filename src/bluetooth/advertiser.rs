@@ -1,3 +1,4 @@
+use embassy_futures::select::{select, Either};
 use crate::bluetooth::{BluetoothEvent, event, gatt::EspStartGattServer};
 use trouble_host::Controller;
 use trouble_host::gatt::{GattConnectionEvent, GattEvent};
@@ -5,6 +6,7 @@ use trouble_host::peripheral::Peripheral;
 use trouble_host::prelude::{
     AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, DefaultPacketPool, LE_GENERAL_DISCOVERABLE,
 };
+use crate::bluetooth::notifier::notify_task;
 
 pub(super) async fn run<C>(
     mut peripheral: Peripheral<'_, C, DefaultPacketPool>,
@@ -41,52 +43,73 @@ pub(super) async fn run<C>(
         event::push(BluetoothEvent::Connected);
         let gatt_connection = connection.with_attribute_server(server).unwrap();
 
-        'connection_loop: loop {
-            match gatt_connection.next().await {
-                GattConnectionEvent::Disconnected { .. } => {
-                    event::push(BluetoothEvent::Disconnected);
-                    break 'connection_loop;
-                }
-                GattConnectionEvent::PhyUpdated { .. } => {}
-                GattConnectionEvent::ConnectionParamsUpdated { .. } => {}
-                GattConnectionEvent::RequestConnectionParams(_) => {}
-                GattConnectionEvent::DataLengthUpdated { .. } => {}
-                GattConnectionEvent::FrameSpaceUpdated { .. } => {}
-                GattConnectionEvent::ConnectionRateChanged { .. } => {}
-                GattConnectionEvent::Gatt { event: gatt_event } => {
-                    let reply = match gatt_event {
-                        GattEvent::Write(write_event) => {
-                            if write_event.handle() == server.esp_start.command.handle {
-                                write_event.with_data(|offset, data| {
-                                    if offset == 0 {
-                                        let mut buffer = [0u8; 32];
-                                        let len = data.len().min(buffer.len());
+        let gatt_loop = async {
+            loop {
+                match gatt_connection.next().await {
+                    GattConnectionEvent::Disconnected { .. } => {
+                        event::push(BluetoothEvent::Disconnected);
+                        break;
+                    }
+                    GattConnectionEvent::PhyUpdated { .. } => {}
+                    GattConnectionEvent::ConnectionParamsUpdated { .. } => {}
+                    GattConnectionEvent::RequestConnectionParams(_) => {}
+                    GattConnectionEvent::DataLengthUpdated { .. } => {}
+                    GattConnectionEvent::FrameSpaceUpdated { .. } => {}
+                    GattConnectionEvent::ConnectionRateChanged { .. } => {}
+                    GattConnectionEvent::Gatt { event: gatt_event } => {
+                        let reply = match gatt_event {
+                            GattEvent::Read(read_event) => {
+                                if read_event.handle() == server.esp_start.status.handle {
+                                    let mut status = [0u8; 32];
+                                    status[..7].copy_from_slice(b"ImReady");
 
-                                        buffer[..len].copy_from_slice(&data[..len]);
-                                        event::push(BluetoothEvent::DataReceived {
-                                            len,
-                                            data: buffer,
-                                        });
+                                    if gatt_connection.set(&server.esp_start.status, &status).is_err() {
+                                        // error for read generate
                                     }
-                                });
+                                    read_event.accept()
+                                } else {
+                                    read_event.accept()
+                                }
                             }
+                            GattEvent::Write(write_event) => {
+                                if write_event.handle() == server.esp_start.command.handle {
+                                    let mut buffer = [0u8; 512];
+                                    write_event.with_data(|offset, data| {
+                                        if offset == 0 {
+                                            let len = data.len().min(buffer.len());
+                                            buffer[..len].copy_from_slice(&data[..len]);
+                                            event::push(BluetoothEvent::DataReceived {
+                                                len,
+                                                data: buffer,
+                                            });
+                                        }
+                                    });
+                                }
 
-                            write_event.accept()
-                        }
-                        other => other.accept(),
-                    };
+                                write_event.accept()
+                            }
+                            other => other.accept(),
+                        };
 
-                    match reply {
-                        Ok(reply) => {
-                            reply.send().await;
-                        }
-
-                        Err(_) => {
-                            // error for response
+                        match reply {
+                            Ok(reply) => {
+                                reply.send().await;
+                            }
+                            Err(_) => {
+                                // error for response
+                            }
                         }
                     }
                 }
             }
+        };
+
+        match select(
+            gatt_loop,
+            notify_task(server, &gatt_connection),
+        ).await {
+            Either::First(_) => {}
+            Either::Second(_) => {}
         }
     }
 }

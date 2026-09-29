@@ -239,6 +239,12 @@ async fn main(spawner: Spawner) -> ! {
                         writeln!(uart, "[BLE] RX bytes: {:02x?}", payload).unwrap();
                     }
                 }
+                BluetoothEvent::ReadRequested => {
+                    writeln!(uart, "[BLE] REad Requested").unwrap();
+                }
+                BluetoothEvent::StatusReadRequested => {
+                    writeln!(uart, "[BLE] Status Read Requested").unwrap();
+                }
             }
         }
 

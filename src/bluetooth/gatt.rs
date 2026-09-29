@@ -6,6 +6,8 @@ use trouble_host::prelude::{
 pub struct EspStartService {
     #[characteristic(uuid = "12345678-1234-1234-1234-123456789002", write)]
     pub command: [u8; 32],
+    #[characteristic(uuid = "12345678-1234-1234-1234-123456789003", read, notify)]
+    pub status: [u8; 32],
 }
 
 #[gatt_server]

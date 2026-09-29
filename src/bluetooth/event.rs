@@ -8,7 +8,9 @@ const EVENT_QUEUE_SIZE: usize = 8;
 pub enum BluetoothEvent {
     Connected,
     Disconnected,
-    DataReceived { len: usize, data: [u8; 32] },
+    DataReceived { len: usize, data: [u8; 512] },
+    ReadRequested,
+    StatusReadRequested,
 }
 
 static EVENT_QUEUE: Mutex<RefCell<Deque<BluetoothEvent, EVENT_QUEUE_SIZE>>> =

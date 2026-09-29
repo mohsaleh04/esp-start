@@ -15,3 +15,4 @@ mod host;
 mod manager;
 mod registry;
 mod scanner;
+mod notifier;

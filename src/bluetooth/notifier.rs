@@ -1,26 +1,29 @@
-use embassy_time::Timer;
 use trouble_host::prelude::PacketPool;
 use trouble_host::gatt::GattConnection;
 use crate::bluetooth::gatt::EspStartGattServer;
+use crate::bluetooth::status::{wait as status_wait, BluetoothStatus};
 
 pub(super) async fn notify_task<P: PacketPool>(
     server: &EspStartGattServer<'_>,
     conn: &GattConnection<'_, '_, P>,
 ) {
-    let status = server.esp_start.status;
-
-    let mut counter: u8 = 0;
+    let status_char = server.esp_start.status;
 
     loop {
-        counter = counter.wrapping_add(1);
+        let status = status_wait().await;
+        let bytes = match status {
+            BluetoothStatus::Idle => b"INT-STS-IDLE".as_slice(),
+            BluetoothStatus::Ready => b"INT-STS-READY".as_slice(),
+            BluetoothStatus::Failed => b"INT-STS-FAILED".as_slice(),
+            BluetoothStatus::Playing => b"INT-STS-PLAYING".as_slice(),
+            BluetoothStatus::Paused => b"INT-STS-PAUSED".as_slice(),
+        };
 
         let mut value = [0u8; 32];
-        value[0] = counter;
+        value[..bytes.len()].copy_from_slice(bytes);
 
-        if status.notify(conn, &value, true).await.is_err() {
+        if status_char.notify(conn, &value, true).await.is_err() {
             break;
         }
-
-        Timer::after_secs(2).await;
     }
 }

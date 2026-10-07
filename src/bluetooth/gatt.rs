@@ -8,6 +8,8 @@ pub struct EspStartService {
     pub command: [u8; 32],
     #[characteristic(uuid = "12345678-1234-1234-1234-123456789003", read, notify)]
     pub status: [u8; 32],
+    #[characteristic(uuid = "12345678-1234-1234-1234-123456789004", indicate)]
+    pub reliable_status: [u8; 32],
 }
 
 #[gatt_server]

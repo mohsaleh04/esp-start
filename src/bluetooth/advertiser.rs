@@ -1,12 +1,14 @@
-use embassy_futures::select::{select, Either};
-use crate::bluetooth::{BluetoothEvent, event, gatt::EspStartGattServer};
+use crate::bluetooth::{
+    event, gatt::EspStartGattServer, status, BluetoothEvent,
+    status::BluetoothStatus, notifier::notify_task
+};
+use embassy_futures::select::{Either, select};
 use trouble_host::Controller;
 use trouble_host::gatt::{GattConnectionEvent, GattEvent};
 use trouble_host::peripheral::Peripheral;
 use trouble_host::prelude::{
     AdStructure, Advertisement, BR_EDR_NOT_SUPPORTED, DefaultPacketPool, LE_GENERAL_DISCOVERABLE,
 };
-use crate::bluetooth::notifier::notify_task;
 
 pub(super) async fn run<C>(
     mut peripheral: Peripheral<'_, C, DefaultPacketPool>,
@@ -34,8 +36,7 @@ pub(super) async fn run<C>(
         .await
         .expect("Failed to start BLE advertising");
 
-    let connection = advertiser
-        .accept()
+    let connection = advertiser.accept()
         .await
         .expect("Failed to accept BLE connection");
 
@@ -59,17 +60,19 @@ pub(super) async fn run<C>(
                     GattConnectionEvent::Gatt { event: gatt_event } => {
                         let reply = match gatt_event {
                             GattEvent::Read(read_event) => {
-                                if read_event.handle() == server.esp_start.status.handle {
+                                let text = b"ImReady Hooray";
+
+                                if read_event.handle() == server.esp_start.status.handle && text.len() <= 32 {
                                     let mut status = [0u8; 32];
-                                    status[..7].copy_from_slice(b"ImReady");
+                                    status[..text.len()].copy_from_slice(text);
 
                                     if gatt_connection.set(&server.esp_start.status, &status).is_err() {
-                                        // error for read generate
+                                        status::set(BluetoothStatus::Failed);
+                                    } else {
+                                        status::set(BluetoothStatus::Ready);
                                     }
-                                    read_event.accept()
-                                } else {
-                                    read_event.accept()
                                 }
+                                read_event.accept()
                             }
                             GattEvent::Write(write_event) => {
                                 if write_event.handle() == server.esp_start.command.handle {
@@ -104,12 +107,10 @@ pub(super) async fn run<C>(
             }
         };
 
-        match select(
-            gatt_loop,
-            notify_task(server, &gatt_connection),
-        ).await {
-            Either::First(_) => {}
-            Either::Second(_) => {}
-        }
+        match select(gatt_loop, notify_task(server, &gatt_connection))
+            .await {
+                Either::First(_) => {}
+                Either::Second(_) => {}
+            }
     }
 }

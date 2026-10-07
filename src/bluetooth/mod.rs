@@ -16,3 +16,4 @@ mod manager;
 mod registry;
 mod scanner;
 mod notifier;
+mod status;

@@ -1,7 +1,4 @@
-use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex,
-    signal::Signal,
-};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 
 #[derive(Debug, Clone, Copy)]
 pub enum BluetoothStatus {

@@ -1,4 +1,6 @@
-use crate::bluetooth::{advertiser, gatt, scanner, config::Config, advertisement::handler::AdvertisementHandler};
+use crate::bluetooth::{
+    advertisement::handler::AdvertisementHandler, advertiser, config::Config, gatt, scanner,
+};
 use bt_hci::cmd::le::LeSetScanParams;
 use bt_hci::controller::{ControllerCmdSync, ExternalController};
 use embassy_executor::Spawner;
@@ -49,13 +51,16 @@ where
     let handler = AdvertisementHandler::new();
     let server = gatt::setup_gatt_server(
         str::from_utf8(bt_name).expect("Failed to parse Bluetooth device name"),
-    ).unwrap();
+    )
+    .unwrap();
 
     match select3(
         stack_runner.run_with_handler(&handler),
         scanner::run(stack_central),
         advertiser::run(stack_peripheral, bt_name, &server),
-    ).await {
+    )
+    .await
+    {
         Either3::First(result) => {
             result.expect("Bluetooth stack runner failed");
         }

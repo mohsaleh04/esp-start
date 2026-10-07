@@ -1,7 +1,7 @@
-use trouble_host::prelude::PacketPool;
-use trouble_host::gatt::GattConnection;
 use crate::bluetooth::gatt::EspStartGattServer;
-use crate::bluetooth::status::{wait as status_wait, BluetoothStatus};
+use crate::bluetooth::status::{BluetoothStatus, wait as status_wait};
+use trouble_host::gatt::GattConnection;
+use trouble_host::prelude::PacketPool;
 
 pub(super) async fn notify_task<P: PacketPool>(
     server: &EspStartGattServer<'_>,

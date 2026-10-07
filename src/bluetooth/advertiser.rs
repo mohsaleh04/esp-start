@@ -1,6 +1,6 @@
 use crate::bluetooth::{
-    event, gatt::EspStartGattServer, status, BluetoothEvent,
-    status::BluetoothStatus, notifier::notify_task
+    BluetoothEvent, event, gatt::EspStartGattServer, notifier::notify_task, status,
+    status::BluetoothStatus,
 };
 use embassy_futures::select::{Either, select};
 use trouble_host::Controller;
@@ -36,7 +36,8 @@ pub(super) async fn run<C>(
         .await
         .expect("Failed to start BLE advertising");
 
-    let connection = advertiser.accept()
+    let connection = advertiser
+        .accept()
         .await
         .expect("Failed to accept BLE connection");
 
@@ -62,11 +63,16 @@ pub(super) async fn run<C>(
                             GattEvent::Read(read_event) => {
                                 let text = b"ImReady Hooray";
 
-                                if read_event.handle() == server.esp_start.status.handle && text.len() <= 32 {
+                                if read_event.handle() == server.esp_start.status.handle
+                                    && text.len() <= 32
+                                {
                                     let mut status = [0u8; 32];
                                     status[..text.len()].copy_from_slice(text);
 
-                                    if gatt_connection.set(&server.esp_start.status, &status).is_err() {
+                                    if gatt_connection
+                                        .set(&server.esp_start.status, &status)
+                                        .is_err()
+                                    {
                                         status::set(BluetoothStatus::Failed);
                                     } else {
                                         status::set(BluetoothStatus::Ready);
@@ -107,10 +113,9 @@ pub(super) async fn run<C>(
             }
         };
 
-        match select(gatt_loop, notify_task(server, &gatt_connection))
-            .await {
-                Either::First(_) => {}
-                Either::Second(_) => {}
-            }
+        match select(gatt_loop, notify_task(server, &gatt_connection)).await {
+            Either::First(_) => {}
+            Either::Second(_) => {}
+        }
     }
 }

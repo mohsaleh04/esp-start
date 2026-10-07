@@ -13,7 +13,7 @@ mod event;
 mod gatt;
 mod host;
 mod manager;
+mod notifier;
 mod registry;
 mod scanner;
-mod notifier;
 mod status;

@@ -1,8 +1,11 @@
 # esp-start
 
-`esp-start` is a long-running educational embedded Rust project for the classic dual-core ESP32. Its goal is to grow from hardware bring-up experiments into a small, self-contained embedded computer with a display, input, removable storage, networking, a user interface, a shell, and a file manager.
+`esp-start` is a long-running educational embedded Rust project for the classic dual-core ESP32. Its goal is to grow
+from hardware bring-up experiments into a small, self-contained embedded computer with a display, input, removable
+storage, networking, a user interface, a shell, and a file manager.
 
-The firmware is `no_std`. It deliberately keeps lower-level mechanisms such as shared SPI, framebuffer graphics, drawing algorithms, interrupts, storage, and networking visible instead of hiding them behind a large framework.
+The firmware is `no_std`. It deliberately keeps lower-level mechanisms such as shared SPI, framebuffer graphics, drawing
+algorithms, interrupts, storage, and networking visible instead of hiding them behind a large framework.
 
 ## Current capabilities
 
@@ -27,30 +30,32 @@ See [DOC.md](DOC.md) for the architecture, implementation details, constraints, 
 
 ## Wiring
 
-| Device signal | ESP32 pin | Notes |
-|---|---:|---|
-| LCD backlight | GPIO22 | Digital output |
-| LCD reset | GPIO21 | LCD-specific control |
-| LCD data/command | GPIO17 | LCD-specific control |
-| LCD chip select | GPIO5 | Independent SPI chip select |
-| SPI SCK | GPIO18 | Shared by LCD and SD |
-| SPI MOSI | GPIO23 | Shared by LCD and SD |
-| SPI MISO | GPIO19 | Used by SD |
-| SD chip select | GPIO16 | Independent SPI chip select |
-| Backlight button | GPIO32 | Active-low, internal pull-up |
-| LED-mode button | GPIO27 | Active-low, internal pull-up |
-| Blink LED | GPIO25 | Digital output |
-| PWM fade LED A | GPIO26 | First PWM output |
-| PWM fade LED B | GPIO14 | Complementary PWM output |
-| PCNT input | GPIO33 | Internal pull-up |
-| UART0 TX | GPIO1 | Serial logging |
-| UART0 RX | GPIO3 | Serial input |
+| Device signal    | ESP32 pin | Notes                        |
+|------------------|----------:|------------------------------|
+| LCD backlight    |    GPIO22 | Digital output               |
+| LCD reset        |    GPIO21 | LCD-specific control         |
+| LCD data/command |    GPIO17 | LCD-specific control         |
+| LCD chip select  |     GPIO5 | Independent SPI chip select  |
+| SPI SCK          |    GPIO18 | Shared by LCD and SD         |
+| SPI MOSI         |    GPIO23 | Shared by LCD and SD         |
+| SPI MISO         |    GPIO19 | Used by SD                   |
+| SD chip select   |    GPIO16 | Independent SPI chip select  |
+| Backlight button |    GPIO32 | Active-low, internal pull-up |
+| LED-mode button  |    GPIO27 | Active-low, internal pull-up |
+| Blink LED        |    GPIO25 | Digital output               |
+| PWM fade LED A   |    GPIO26 | First PWM output             |
+| PWM fade LED B   |    GPIO14 | Complementary PWM output     |
+| PCNT input       |    GPIO33 | Internal pull-up             |
+| UART0 TX         |     GPIO1 | Serial logging               |
+| UART0 RX         |     GPIO3 | Serial input                 |
 
-`src/bin/main.rs` is the authoritative wiring reference. The LCD and SD card share SPI2 but have independent chip-select lines. The shared-bus design is intentional and must be preserved when extending either driver.
+`src/bin/main.rs` is the authoritative wiring reference. The LCD and SD card share SPI2 but have independent chip-select
+lines. The shared-bus design is intentional and must be preserved when extending either driver.
 
 ## Wi-Fi configuration
 
-Wi-Fi credentials are read at compile time and must never be committed to the repository. Set them only in the local build environment:
+Wi-Fi credentials are read at compile time and must never be committed to the repository. Set them only in the local
+build environment:
 
 ```bash
 ESP_START_WIFI_SSID='your-ssid' \
@@ -58,15 +63,20 @@ ESP_START_WIFI_PASSWORD='your-password' \
 cargo build
 ```
 
-`ESP_START_WIFI_PASSWORD` is optional at the source level to support open networks. If `ESP_START_WIFI_SSID` is absent, networking is skipped and the firmware continues into the main event loop in offline mode.
+`ESP_START_WIFI_PASSWORD` is optional at the source level to support open networks. If `ESP_START_WIFI_SSID` is absent,
+networking is skipped and the firmware continues into the main event loop in offline mode.
 
-The demonstration HTTP endpoint is currently configured as constants in `src/bin/main.rs`. The request uses `Connection: close`, and the client reconnects and sends the same request again after five seconds. Do not point it at a non-idempotent endpoint without first changing the retry policy.
+The demonstration HTTP endpoint is currently configured as constants in `src/bin/main.rs`. The request uses
+`Connection: close`, and the client reconnects and sends the same request again after five seconds. Do not point it at a
+non-idempotent endpoint without first changing the retry policy.
 
 ## Toolchain
 
-The project uses the ESP Rust ecosystem and targets `xtensa-esp32-none-elf`. The repository's `Cargo.toml`, `Cargo.lock`, and CI configuration are authoritative because ESP HAL APIs evolve quickly.
+The project uses the ESP Rust ecosystem and targets `xtensa-esp32-none-elf`. The repository's `Cargo.toml`,
+`Cargo.lock`, and CI configuration are authoritative because ESP HAL APIs evolve quickly.
 
-Install and activate a compatible ESP Rust toolchain with `espup`. Before running commands that link the firmware, source the export script produced by `espup` so `xtensa-esp32-elf-gcc` is available.
+Install and activate a compatible ESP Rust toolchain with `espup`. Before running commands that link the firmware,
+source the export script produced by `espup` so `xtensa-esp32-elf-gcc` is available.
 
 ## Build and quality checks
 
@@ -79,7 +89,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo build
 ```
 
-Build-time Wi-Fi variables may be supplied to these commands when networking is required. Missing credentials do not prevent compilation.
+Build-time Wi-Fi variables may be supplied to these commands when networking is required. Missing credentials do not
+prevent compilation.
 
 ## Flash and monitor
 
@@ -89,8 +100,11 @@ With `espflash` installed and the board connected:
 espflash flash --monitor target/xtensa-esp32-none-elf/debug/esp-start
 ```
 
-UART0 is the primary diagnostic channel. It reports hardware initialization, SD contents, input events, pulse-counter changes, Wi-Fi/DHCP status, and TCP activity.
+UART0 is the primary diagnostic channel. It reports hardware initialization, SD contents, input events, pulse-counter
+changes, Wi-Fi/DHCP status, and TCP activity.
 
 ## Project direction
 
-The next major milestone is a primitive file manager that combines the existing display, input, and storage subsystems. This is not intended to become a Linux-like kernel. The goal is a compact integrated environment with drivers, services, a UI or shell, and small applications while retaining the educational value of the lower-level implementation.
+The next major milestone is a primitive file manager that combines the existing display, input, and storage subsystems.
+This is not intended to become a Linux-like kernel. The goal is a compact integrated environment with drivers, services,
+a UI or shell, and small applications while retaining the educational value of the lower-level implementation.

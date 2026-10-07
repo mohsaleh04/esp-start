@@ -89,6 +89,7 @@ impl LedController {
         let mut ledc = Ledc::new(ledc_peripheral);
         let pwm_timer = PWM_TIMER.init(ledc.timer::<LowSpeed>(TimerNumber::Timer0));
         pwm::setup_timer(pwm_timer, PwmTimerConfig::default(500));
+
         let fade_a = pwm::setup_channel(
             &mut ledc,
             fade_a_pin,

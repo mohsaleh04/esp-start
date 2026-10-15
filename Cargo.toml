@@ -17,7 +17,7 @@ bench = false
 [dependencies]
 esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32"] }
 
-esp-hal = { version = "~1.2.1", features = ["esp32", "unstable"] }
+esp-hal = { version = "~1.2", features = ["esp32", "unstable"] }
 esp-radio = { version = "=1.0.0-beta.1", features = ["esp32", "wifi", "ble", "coex", "esp-alloc", "unstable"] }
 esp-rtos = { version = "0.4.0", features = ["esp32", "esp-radio", "esp-alloc", "embassy"] }
 esp-alloc = { version = "0.11.0", features = ["esp32"] }
@@ -27,6 +27,10 @@ embedded-hal-bus = "0.3"
 embedded-sdmmc = "0.10"
 embassy-net = { version = "0.9.1", features = ["dhcpv4", "medium-ethernet", "tcp", "udp"] }
 mbedtls-rs = { version = "0.3.0", features = ["esp32", "embassy-time"] }
+reqwless = { version = "0.14", default-features = false }
+
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
 
 embassy-executor = "0.10.0"
 embassy-time = "0.5.1"
@@ -39,6 +43,7 @@ trouble-host = { version = "=0.7.0", features = ["scan"] }
 
 critical-section = "1.2.0"
 static_cell = "2.1.1"
+embedded-io-async = "0.7.0"
 
 
 # For fine-tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html

@@ -1,57 +1,43 @@
+use crate::net::{error::HttpClientError, request::HttpRequest, socket};
 use core::fmt::Write;
 use core::net::Ipv4Addr;
 use embassy_net::tcp::{State, TcpSocket};
 use embassy_net::{IpAddress, Stack};
-use embassy_time::{Duration, Instant, with_timeout};
-use esp_hal::Blocking;
-use esp_hal::uart::Uart;
+use embassy_time::{Duration, with_timeout};
+use heapless::String;
+use reqwless::client::HttpConnection;
+use reqwless::request::{Request, RequestBuilder};
+use reqwless::response::StatusCode;
 
-use crate::net::socket;
-
-const POLL_TIMEOUT_MS: u64 = 10;
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const RECONNECT_DELAY: Duration = Duration::from_secs(5);
-const RESPONSE_BUFFER_SIZE: usize = 512;
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+const RESPONSE_BUFFER_SIZE: usize = 4096;
 
 pub struct HttpClient {
     socket: TcpSocket<'static>,
-    connected: bool,
     server_ip_port: (Ipv4Addr, u16),
-    request: &'static [u8],
-    reconnect_at: Instant,
     response_buffer: [u8; RESPONSE_BUFFER_SIZE],
 }
 
 impl HttpClient {
-    pub async fn connect_and_send(
-        stack: Stack<'static>,
-        server_ip_port: (Ipv4Addr, u16),
-        request: &'static [u8],
-        uart: &mut Uart<'static, Blocking>,
-    ) -> Self {
-        let socket = socket::new(stack);
-        let mut client = Self {
-            socket,
-            connected: false,
+    pub fn new(stack: Stack<'static>, server_ip_port: (Ipv4Addr, u16)) -> Self {
+        Self {
+            socket: socket::new(stack),
             server_ip_port,
-            request,
-            reconnect_at: Instant::now(),
             response_buffer: [0; RESPONSE_BUFFER_SIZE],
-        };
-        client.try_connect_and_send(uart).await;
-        client
+        }
     }
 
-    async fn try_connect_and_send(&mut self, uart: &mut Uart<'static, Blocking>) {
+    pub async fn send<F, R>(
+        &mut self,
+        request: HttpRequest<'_>,
+        on_response: F,
+    ) -> Result<R, HttpClientError>
+    where
+        F: FnOnce(StatusCode, &[u8]) -> R,
+    {
         self.socket.abort();
-        writeln!(
-            uart,
-            "[TCP] Connecting to {}:{} ...",
-            self.server_ip_port.0, self.server_ip_port.1
-        )
-        .unwrap();
 
-        self.connected = match with_timeout(
+        let connection_result = with_timeout(
             CONNECT_TIMEOUT,
             socket::connect_tcp(
                 &mut self.socket,
@@ -59,65 +45,66 @@ impl HttpClient {
                 self.server_ip_port.1,
             ),
         )
-        .await
-        {
-            Ok(Ok(())) if self.socket.state() == State::Established => {
-                uart.write_str("[TCP] Connected\r\n").unwrap();
-                if let Err(error) = self.socket.write(self.request).await {
-                    writeln!(uart, "[TCP] Request failed: {error:?}").unwrap();
-                    false
-                } else {
-                    true
-                }
-            }
-            Ok(Ok(())) => {
-                writeln!(uart, "[TCP] Connection failed: {:?}", self.socket.state()).unwrap();
-                false
-            }
-            Ok(Err(error)) => {
-                writeln!(uart, "[TCP] Connection failed: {error:?}").unwrap();
-                false
-            }
+        .await;
+        match connection_result {
+            Ok(Ok(())) if self.socket.state() == State::Established => {}
             Err(_) => {
-                uart.write_str("[TCP] Connection timed out\r\n").unwrap();
-                false
+                self.socket.abort();
+                return Err(HttpClientError::ConnectTimeout);
+            }
+            _ => {
+                self.socket.abort();
+                return Err(HttpClientError::ConnectFailed);
+            }
+        }
+
+        let connection_host = self.print_host()?;
+        let mut connection = HttpConnection::Plain(&mut self.socket);
+
+        let request_builder = Request::new(request.method, request.path)
+            .host(connection_host.as_str())
+            .headers(request.headers);
+        let response_result = match request.body {
+            Some(body) => {
+                connection
+                    .send(
+                        request_builder.body(body).build(),
+                        &mut self.response_buffer,
+                    )
+                    .await
+            }
+            None => {
+                connection
+                    .send(request_builder.build(), &mut self.response_buffer)
+                    .await
             }
         };
 
-        if !self.connected {
-            self.reconnect_at = Instant::now() + RECONNECT_DELAY;
-        }
+        let response = match response_result {
+            Ok(response) => response,
+            Err(_) => {
+                self.socket.abort();
+                return Err(HttpClientError::RequestFailed);
+            }
+        };
+        let status = response.status;
+        let body = match response.body().read_to_end().await {
+            Ok(body) => body,
+            Err(_) => {
+                self.socket.abort();
+                return Err(HttpClientError::BodyReadFailed);
+            }
+        };
+
+        let result = on_response(status, body);
+        self.socket.abort();
+        Ok(result)
     }
 
-    pub async fn poll(&mut self, uart: &mut Uart<'static, Blocking>) {
-        if !self.connected {
-            if Instant::now() >= self.reconnect_at {
-                self.try_connect_and_send(uart).await;
-            }
-            return;
-        }
-
-        match with_timeout(
-            Duration::from_millis(POLL_TIMEOUT_MS),
-            self.socket.read(&mut self.response_buffer),
-        )
-        .await
-        {
-            Ok(Ok(0)) => {
-                uart.write_str("[TCP] Connection closed\r\n").unwrap();
-                self.connected = false;
-                self.reconnect_at = Instant::now() + RECONNECT_DELAY;
-            }
-            Ok(Ok(size)) => match core::str::from_utf8(&self.response_buffer[..size]) {
-                Ok(text) => writeln!(uart, "[TCP] {text}").unwrap(),
-                Err(_) => uart.write_str("[TCP] Received non-UTF-8 data\r\n").unwrap(),
-            },
-            Ok(Err(error)) => {
-                writeln!(uart, "[TCP] Read failed: {error:?}").unwrap();
-                self.connected = false;
-                self.reconnect_at = Instant::now() + RECONNECT_DELAY;
-            }
-            Err(_) => {}
-        }
+    fn print_host(&self) -> Result<String<32>, HttpClientError> {
+        let mut host: String<32> = String::new();
+        write!(host, "{}:{}", self.server_ip_port.0, self.server_ip_port.1)
+            .map_err(move |_| HttpClientError::RequestFailed)?;
+        Ok(host)
     }
 }

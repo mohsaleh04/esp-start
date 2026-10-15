@@ -1,3 +1,4 @@
+use esp_hal::rng::Rng;
 use esp_hal::time::{Duration, Instant};
 
 pub fn delay(delay_ms: u64) {
@@ -6,6 +7,6 @@ pub fn delay(delay_ms: u64) {
 }
 
 pub fn generate_seed() -> u64 {
-    let rng = esp_hal::rng::Rng::new();
+    let rng = Rng::new();
     ((rng.random() as u64) << 32) | rng.random() as u64
 }

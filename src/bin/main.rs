@@ -15,22 +15,20 @@ use esp_hal::delay::Delay;
 use esp_hal::pcnt::Pcnt;
 use esp_hal::pcnt::channel::EdgeMode;
 use esp_hal::timer::timg::TimerGroup;
+use esp_start::ai::{AiClient, AiError};
 use esp_start::bluetooth::{BluetoothEvent, BluetoothManager};
 use esp_start::com::uart;
 use esp_start::io::{self, ButtonId, InputEvent, PinConfig, ScreenOutPins, SdOutPins};
 use esp_start::leds::{LedController, UPDATE_INTERVAL_MS};
-use esp_start::net::{HttpClient, WifiNetwork};
+use esp_start::net::HttpClient;
 use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
 use esp_start::sd::{SdStorage, SdStorageError};
+use esp_start::wifi::WifiNetwork;
 use esp_start::{pcnt, runtime, spi_bus, timer};
 
 const WIFI_SSID: Option<&str> = option_env!("ESP_START_WIFI_SSID");
 const WIFI_PASSWORD: Option<&str> = option_env!("ESP_START_WIFI_PASSWORD");
-const SERVER_ADDR_IPPORT: (Ipv4Addr, u16) = (Ipv4Addr::new(192, 168, 1, 200), 80);
-const HTTP_REQUEST: &[u8] = b"GET /gpio/1 HTTP/1.1\r\n\
-    Host: 192.168.1.200\r\n\
-    Connection: close\r\n\
-    \r\n";
+const SERVER_ADDR_IPPORT: (Ipv4Addr, u16) = (Ipv4Addr::new(192, 168, 1, 102), 1234);
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
@@ -180,17 +178,46 @@ async fn main(spawner: Spawner) -> ! {
         }
     };
     let mut http_client = match wifi_network.as_ref() {
-        Some(network) => Some(
-            HttpClient::connect_and_send(
-                network.stack(),
-                SERVER_ADDR_IPPORT,
-                HTTP_REQUEST,
-                &mut uart,
-            )
-            .await,
-        ),
+        Some(network) => Some(HttpClient::new(network.stack(), SERVER_ADDR_IPPORT)),
         None => None,
     };
+
+    if let Some(client) = http_client.as_mut() {
+        AiClient::get_models(client, |result| match result {
+            Ok(model_list) => {
+                writeln!(
+                    uart,
+                    "[AI] Get Models: Found {} models",
+                    model_list.models.len()
+                )
+                .unwrap();
+                for model in &model_list.models {
+                    writeln!(
+                        uart,
+                        "[AI] Get Models: {} — {} ({})",
+                        model.display_name, model.key, model.model_type
+                    )
+                    .unwrap();
+                }
+            }
+            Err(error) => match error {
+                AiError::Http(error) => {
+                    writeln!(uart, "[AI] Get Models: Request send failed: {error:?}").unwrap();
+                }
+                AiError::HttpStatus(error_code) => {
+                    writeln!(
+                        uart,
+                        "[AI] Get Models: Request had an error: {error_code:?}"
+                    )
+                    .unwrap();
+                }
+                AiError::Json(error) => {
+                    writeln!(uart, "[AI] Get Models: Request parse failed: {error:?}").unwrap();
+                }
+            },
+        })
+        .await;
+    }
 
     // --- Pulse counter on GPIO33 ---
     let pulse_counter = Pcnt::new(peripherals.PCNT);
@@ -263,10 +290,6 @@ async fn main(spawner: Spawner) -> ! {
         if pulse_count != last_pulse_count {
             writeln!(uart, "[PCNT] Current value: {pulse_count}").unwrap();
             last_pulse_count = pulse_count;
-        }
-
-        if let Some(client) = http_client.as_mut() {
-            client.poll(&mut uart).await;
         }
 
         Timer::after(Duration::from_millis(1)).await;

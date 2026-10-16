@@ -2,7 +2,7 @@
 #![no_main]
 extern crate alloc;
 
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use core::fmt::Write;
 use core::hint::spin_loop;
 use core::net::Ipv4Addr;
@@ -26,7 +26,7 @@ use esp_start::net::HttpClient;
 use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
 use esp_start::sd::{SdStorage, SdStorageError};
 use esp_start::wifi::WifiNetwork;
-use esp_start::{pcnt, runtime, spi_bus, timer};
+use esp_start::{ai, pcnt, runtime, spi_bus, timer};
 
 const WIFI_SSID: Option<&str> = option_env!("ESP_START_WIFI_SSID");
 const WIFI_PASSWORD: Option<&str> = option_env!("ESP_START_WIFI_PASSWORD");
@@ -174,49 +174,11 @@ async fn main(spawner: Spawner) -> ! {
     };
 
     // --- AI Chatting ---
-    let mut selected_model: Option<String> = None;
-    if let Some(client) = http_client.as_mut() {
-        AiClient::get_models(client, |result| match result {
-            Ok(model_list) => {
-                writeln!(
-                    uart,
-                    "[AI] Get Models: Found {} models",
-                    model_list.models.len()
-                )
-                .unwrap();
-                for model in &model_list.models {
-                    writeln!(
-                        uart,
-                        "[AI] Get Models: {} — {} ({})",
-                        model.display_name, model.key, model.model_type
-                    )
-                    .unwrap();
-                }
-                selected_model = model_list.models.first().map(|model| model.key.clone());
-            }
-            Err(error) => match error {
-                AiError::Http(error) => {
-                    writeln!(uart, "[AI] Get Models: Request send failed: {error:?}").unwrap();
-                }
-                AiError::HttpStatus(error_code) => {
-                    writeln!(
-                        uart,
-                        "[AI] Get Models: Request had an error: {error_code:?}"
-                    )
-                    .unwrap();
-                }
-                AiError::Json(error) => {
-                    writeln!(uart, "[AI] Get Models: Request parse failed: {error:?}").unwrap();
-                }
-            },
-        })
-        .await;
-    }
     uart.write_str("\r\n").unwrap();
     uart.write_str("Chatting with first model...\r\n").unwrap();
     let chat_message = AiChatRequest {
-        selected_model_name: selected_model.unwrap(),
-        input: "Hello bro! I am saleh.. This is new first time attraction with you. how are you?".to_string(),
+        selected_model_name: ai::DEFAULT_MODEL_KEY.to_string(),
+        input: "Hi bro! I am Saleh. This is the new first-time attraction with you.".to_string(),
         system_prompt: None,
     };
     if let Some(client) = http_client.as_mut() {

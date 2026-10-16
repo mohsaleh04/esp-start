@@ -45,7 +45,7 @@ impl HttpClient {
                 self.server_ip_port.1,
             ),
         )
-        .await;
+            .await;
         match connection_result {
             Ok(Ok(())) if self.socket.state() == State::Established => {}
             Err(_) => {
@@ -58,7 +58,7 @@ impl HttpClient {
             }
         }
 
-        let connection_host = self.print_host()?;
+        let connection_host = self.host()?;
         let mut connection = HttpConnection::Plain(&mut self.socket);
 
         let request_builder = Request::new(request.method, request.path)
@@ -101,7 +101,7 @@ impl HttpClient {
         Ok(result)
     }
 
-    fn print_host(&self) -> Result<String<32>, HttpClientError> {
+    fn host(&self) -> Result<String<32>, HttpClientError> {
         let mut host: String<32> = String::new();
         write!(host, "{}:{}", self.server_ip_port.0, self.server_ip_port.1)
             .map_err(move |_| HttpClientError::RequestFailed)?;

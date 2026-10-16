@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
+extern crate alloc;
 
+use alloc::string::{String, ToString};
 use core::fmt::Write;
 use core::hint::spin_loop;
 use core::net::Ipv4Addr;
@@ -15,7 +17,7 @@ use esp_hal::delay::Delay;
 use esp_hal::pcnt::Pcnt;
 use esp_hal::pcnt::channel::EdgeMode;
 use esp_hal::timer::timg::TimerGroup;
-use esp_start::ai::{AiClient, AiError};
+use esp_start::ai::{AiChatRequest, AiClient, AiError};
 use esp_start::bluetooth::{BluetoothEvent, BluetoothManager};
 use esp_start::com::uart;
 use esp_start::io::{self, ButtonId, InputEvent, PinConfig, ScreenOutPins, SdOutPins};
@@ -129,13 +131,7 @@ async fn main(spawner: Spawner) -> ! {
         Ok(sd) => {
             uart.write_str("SUCCESS\r\n").unwrap();
             let size_mb = sd.size_bytes() / 1_048_576;
-            writeln!(uart, "[SD] Size: {size_mb} MB").unwrap();
-            screen.draw_fmt(
-                (0, 0),
-                format_args!("Setup Complete\nSD Size: {size_mb} MB"),
-                true,
-                false,
-            );
+            writeln!(uart, "[SD] Inserted; Capacity: {size_mb} MB").unwrap();
 
             if let Err(error) = sd.for_each_root_entry(|entry| {
                 writeln!(
@@ -154,16 +150,11 @@ async fn main(spawner: Spawner) -> ! {
         }
         Err(SdStorageError::CardNotFound) => {
             uart.write_str("NOT FOUND\r\n").unwrap();
-            screen.draw_text((0, 0), "Setup Complete\nSD not inserted", true, false);
         }
         Err(error) => {
             uart.write_str("FAILED\r\n").unwrap();
             writeln!(uart, "--> Error: {error:?}").unwrap();
-            screen.draw_text((0, 0), "Setup Complete\nSD mount failed", true, false);
         }
-    }
-    if let Err(error) = screen.flush() {
-        writeln!(uart, "[LCD] Flush failed: {error:#?}").unwrap();
     }
 
     // --- Wi-Fi and HTTP ---
@@ -182,6 +173,8 @@ async fn main(spawner: Spawner) -> ! {
         None => None,
     };
 
+    // --- AI Chatting ---
+    let mut selected_model: Option<String> = None;
     if let Some(client) = http_client.as_mut() {
         AiClient::get_models(client, |result| match result {
             Ok(model_list) => {
@@ -199,6 +192,7 @@ async fn main(spawner: Spawner) -> ! {
                     )
                     .unwrap();
                 }
+                selected_model = model_list.models.first().map(|model| model.key.clone());
             }
             Err(error) => match error {
                 AiError::Http(error) => {
@@ -213,6 +207,50 @@ async fn main(spawner: Spawner) -> ! {
                 }
                 AiError::Json(error) => {
                     writeln!(uart, "[AI] Get Models: Request parse failed: {error:?}").unwrap();
+                }
+            },
+        })
+        .await;
+    }
+    uart.write_str("\r\n").unwrap();
+    uart.write_str("Chatting with first model...\r\n").unwrap();
+    let chat_message = AiChatRequest {
+        selected_model_name: selected_model.unwrap(),
+        input: "Hello bro! I am saleh.. This is new first time attraction with you. how are you?".to_string(),
+        system_prompt: None,
+    };
+    if let Some(client) = http_client.as_mut() {
+        AiClient::send_message(client, chat_message, |result| match result {
+            Ok(response) => {
+                writeln!(uart, "[AI] SendMessage: message processing ...").unwrap();
+                for output in &response.output {
+                    if output.output_type == "message" {
+                        writeln!(
+                            uart,
+                            "[AI] SendMessage: Received message: {}",
+                            output.content
+                        )
+                        .unwrap();
+                        screen.draw_fmt((0, 0), format_args!("{}", output.content), true, false);
+                        if let Err(error) = screen.flush() {
+                            writeln!(uart, "[LCD] Flush failed: {error:#?}").unwrap();
+                        }
+                    }
+                }
+            }
+            Err(error) => match error {
+                AiError::Http(error) => {
+                    writeln!(uart, "[AI] SendMessage: Request send failed: {error:?}").unwrap();
+                }
+                AiError::HttpStatus(error_code) => {
+                    writeln!(
+                        uart,
+                        "[AI] SendMessage: Request had an error: {error_code:?}"
+                    )
+                    .unwrap();
+                }
+                AiError::Json(error) => {
+                    writeln!(uart, "[AI] SendMessage: Request parse failed: {error:?}").unwrap();
                 }
             },
         })

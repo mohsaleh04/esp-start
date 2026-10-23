@@ -1,15 +1,15 @@
 type PixelArray = [u8; 5];
 
-pub(super) const ASCII_FONT_FIRST_INDEX: usize = 0x20;
-pub(super) const ASCII_FONT_CHAR_WIDTH: usize = 5;
-pub(super) const ASCII_FONT_CHAR_HEIGHT: usize = 8;
-pub(super) const ASCII_FONT_CHAR_SPACING: usize = 1;
-pub(super) const ASCII_FONT_LINE_SPACING: usize = 2;
+pub const ASCII_FONT_FIRST_INDEX: usize = 0x20;
+pub const ASCII_FONT_CHAR_WIDTH: usize = 5;
+pub const ASCII_FONT_CHAR_HEIGHT: usize = 8;
+pub const ASCII_FONT_CHAR_SPACING: usize = 1;
+pub const ASCII_FONT_LINE_SPACING: usize = 2;
 
 // Mapping of ASCII characters to their 5x8 pixel representation.
 // Every character is laid out in a 5x8 pixel grid where each
 // bit is a pixel (1: on, 0: off).
-pub(super) static ASCII_FONT: [PixelArray; 95] = [
+pub static ASCII_FONT: [PixelArray; 95] = [
     [0x00, 0x00, 0x00, 0x00, 0x00], // 20
     [0x00, 0x00, 0x5f, 0x00, 0x00], // 21 !
     [0x00, 0x07, 0x00, 0x07, 0x00], // 22 "

@@ -10,13 +10,17 @@ use core::ops::ControlFlow;
 use core::panic::PanicInfo;
 
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use embedded_hal_bus::spi::RefCellDevice;
+use esp_hal::Blocking;
 use esp_hal::clock::CpuClock;
 use esp_hal::delay::Delay;
+use esp_hal::gpio::Output;
 use esp_hal::pcnt::Pcnt;
 use esp_hal::pcnt::channel::EdgeMode;
+use esp_hal::spi::master::Spi;
 use esp_hal::timer::timg::TimerGroup;
+use esp_hal::uart::Uart;
 use esp_start::ai::{AiChatRequest, AiClient, AiError};
 use esp_start::bluetooth::{BluetoothEvent, BluetoothManager};
 use esp_start::com::uart;
@@ -173,52 +177,6 @@ async fn main(spawner: Spawner) -> ! {
         None => None,
     };
 
-    // --- AI Chatting ---
-    uart.write_str("\r\n").unwrap();
-    uart.write_str("Chatting with first model...\r\n").unwrap();
-    let chat_message = AiChatRequest {
-        selected_model_name: ai::DEFAULT_MODEL_KEY.to_string(),
-        input: "Hi bro! I am Saleh. This is the new first-time attraction with you.".to_string(),
-        system_prompt: None,
-    };
-    if let Some(client) = http_client.as_mut() {
-        AiClient::send_message(client, chat_message, |result| match result {
-            Ok(response) => {
-                writeln!(uart, "[AI] SendMessage: message processing ...").unwrap();
-                for output in &response.output {
-                    if output.output_type == "message" {
-                        writeln!(
-                            uart,
-                            "[AI] SendMessage: Received message: {}",
-                            output.content
-                        )
-                        .unwrap();
-                        screen.draw_fmt((0, 0), format_args!("{}", output.content), true, false);
-                        if let Err(error) = screen.flush() {
-                            writeln!(uart, "[LCD] Flush failed: {error:#?}").unwrap();
-                        }
-                    }
-                }
-            }
-            Err(error) => match error {
-                AiError::Http(error) => {
-                    writeln!(uart, "[AI] SendMessage: Request send failed: {error:?}").unwrap();
-                }
-                AiError::HttpStatus(error_code) => {
-                    writeln!(
-                        uart,
-                        "[AI] SendMessage: Request had an error: {error_code:?}"
-                    )
-                    .unwrap();
-                }
-                AiError::Json(error) => {
-                    writeln!(uart, "[AI] SendMessage: Request parse failed: {error:?}").unwrap();
-                }
-            },
-        })
-        .await;
-    }
-
     // --- Pulse counter on GPIO33 ---
     let pulse_counter = Pcnt::new(peripherals.PCNT);
     let pulse_unit = pulse_counter.unit0;
@@ -232,6 +190,8 @@ async fn main(spawner: Spawner) -> ! {
     pulse_unit.clear();
     pulse_unit.resume();
     let mut last_pulse_count = pulse_unit.value();
+
+    let mut next_greeting_text = Instant::now() + Duration::from_secs(10);
 
     loop {
         while let Some(event) = io::next_input_event() {
@@ -292,6 +252,68 @@ async fn main(spawner: Spawner) -> ! {
             last_pulse_count = pulse_count;
         }
 
+        // --- AI Chatting ---
+        if Instant::now() >= next_greeting_text {
+            generate_greeting_msg(&mut uart, &mut screen, &mut http_client).await;
+            next_greeting_text += Duration::from_secs(10);
+        }
+
         Timer::after(Duration::from_millis(1)).await;
+    }
+}
+
+async fn generate_greeting_msg(
+    uart: &mut Uart<'_, Blocking>,
+    screen: &mut ScreenController<RefCellDevice<'_, Spi<'_, Blocking>, Output<'_>, Delay>>,
+    http_client: &mut Option<HttpClient>,
+) {
+    uart.write_str("\r\n").unwrap();
+    uart.write_str("Chatting with first model...\r\n").unwrap();
+    screen.clear();
+    screen.draw_text((0, 0), "Chatting ...", true, false);
+    
+    let chat_message = AiChatRequest {
+        selected_model_name: ai::DEFAULT_MODEL_KEY.to_string(),
+        input: "Hi bro! I am Saleh. This is the new first-time attraction with you.".to_string(),
+        system_prompt: None,
+    };
+
+    if let Some(client) = http_client.as_mut() {
+        AiClient::send_message(client, chat_message, |result| match result {
+            Ok(response) => {
+                writeln!(uart, "[AI] SendMessage: message processing ...").unwrap();
+                for output in &response.output {
+                    if output.output_type == "message" {
+                        writeln!(
+                            uart,
+                            "[AI] SendMessage: Received message: {}",
+                            output.content
+                        )
+                        .unwrap();
+                        screen.clear();
+                        screen.draw_fmt((0, 0), format_args!("{}", output.content), true, false);
+                    }
+                }
+            }
+            Err(error) => match error {
+                AiError::Http(error) => {
+                    writeln!(uart, "[AI] SendMessage: Request send failed: {error:?}").unwrap();
+                }
+                AiError::HttpStatus(error_code) => {
+                    writeln!(
+                        uart,
+                        "[AI] SendMessage: Request had an error: {error_code:?}"
+                    )
+                    .unwrap();
+                }
+                AiError::Json(error) => {
+                    writeln!(uart, "[AI] SendMessage: Request parse failed: {error:?}").unwrap();
+                }
+            },
+        })
+        .await;
+    }
+    if let Err(error) = screen.flush() {
+        writeln!(uart, "[LCD] Flush failed: {error:#?}").unwrap();
     }
 }

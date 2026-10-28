@@ -16,3 +16,4 @@ pub mod spi_bus;
 pub mod timer;
 pub mod utils;
 pub mod wifi;
+pub mod compass;

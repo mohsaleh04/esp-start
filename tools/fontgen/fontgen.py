@@ -1,77 +1,26 @@
 #!.venv/bin/python
+"""Generate compact 1-bit Rust fonts for the PCD8544 84x48 LCD.
+
+Output format is unchanged: BitmapFont, Glyph, and column-major one-byte-per-column
+bitmaps (bit 0 is the top pixel). Every glyph must be at most 8 pixels high.
+The text renderer must treat its Y anchor as a baseline, with the traditional
+Adafruit-GFX-compatible offset of 1 - bitmap_top.
+
+Requires freetype-py. Optional Pillow enables a full-resolution LCD preview.
 """
-Generate a compact monochrome bitmap font for an embedded Rust renderer.
-
-The rasterization pipeline intentionally follows the approach used by
-Adafruit_GFX's fontconvert utility:
-
-    TTF/OTF
-       |
-       v
-    FreeType
-       |
-       +-- monochrome rendering
-       +-- glyph metrics
-       +-- bitmap
-       |
-       v
-    Rust BitmapFont
-
-The generated firmware data uses column-major bitmaps:
-
-    bitmap[offset + x]
-        bit 0 -> top pixel
-        bit 1 -> next pixel
-        ...
-        bit 7 -> bottom pixel
-
-Therefore the generated glyph height must be <= 8 pixels.
-
-This is an OFFLINE build tool. The source font never reaches the ESP32.
-"""
-
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 try:
     import freetype
 except ImportError as exc:
-    raise SystemExit(
-        "freetype-py is required.\n"
-        "Install it with:\n"
-        "    python -m pip install freetype-py"
-    ) from exc
+    raise SystemExit('Install freetype-py: python -m pip install freetype-py') from exc
 
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-DEFAULT_FIRST = 0x20
-DEFAULT_LAST = 0x7E
-
-DEFAULT_DPI = 141
-
-MAX_GLYPH_HEIGHT = 8
-MAX_BITMAP_OFFSET = 0xFFFF
-
-# FreeType flags.
-LOAD_FLAGS = (
-        freetype.FT_LOAD_TARGET_MONO
-        | freetype.FT_LOAD_RENDER
-)
-
-RENDER_MODE = freetype.FT_RENDER_MODE_MONO
-
-
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class GlyphData:
@@ -94,682 +43,231 @@ class FontData:
     dpi: int
 
 
-# ---------------------------------------------------------------------------
-# Validation helpers
-# ---------------------------------------------------------------------------
-
-def validate_u8(name: str, value: int) -> None:
-    if not 0 <= value <= 0xFF:
-        raise ValueError(f"{name}={value} does not fit in u8")
+def integer(text: str) -> int:
+    return int(text, 0)
 
 
-def validate_i8(name: str, value: int) -> None:
-    if not -128 <= value <= 127:
-        raise ValueError(f"{name}={value} does not fit in i8")
+def check_bits(name: str, value: int, lo: int, hi: int) -> None:
+    if not lo <= value <= hi:
+        raise ValueError(f'{name}={value} outside [{lo}, {hi}]')
 
 
-def validate_u16(name: str, value: int) -> None:
-    if not 0 <= value <= 0xFFFF:
-        raise ValueError(f"{name}={value} does not fit in u16")
+def read_pixel(bitmap, x: int, y: int, mode: str) -> int:
+    pitch = abs(bitmap.pitch)
+    actual_y = y if bitmap.pitch >= 0 else bitmap.rows - 1 - y
+    offset = actual_y * pitch
+    if mode == 'mono':
+        return 255 if (bitmap.buffer[offset + x // 8] & (0x80 >> (x % 8))) else 0
+    return bitmap.buffer[offset + x]
 
 
-def validate_range(first: int, last: int) -> None:
-    if not 0 <= first <= 0xFF:
-        raise ValueError(f"first codepoint must fit in u8: {first:#x}")
-
-    if not 0 <= last <= 0xFF:
-        raise ValueError(f"last codepoint must fit in u8: {last:#x}")
-
-    if first > last:
-        raise ValueError(
-            f"first codepoint ({first:#x}) must not be greater "
-            f"than last codepoint ({last:#x})"
-        )
-
-
-# ---------------------------------------------------------------------------
-# FreeType helpers
-# ---------------------------------------------------------------------------
-
-def load_face(font_path: Path) -> freetype.Face:
-    """Load a FreeType face from a font file."""
-    try:
-        return freetype.Face(str(font_path))
-    except Exception as exc:
-        raise RuntimeError(
-            f"failed to load font: {font_path}"
-        ) from exc
-
-
-def configure_face(
-        face: freetype.Face,
-        *,
-        pixel_height: int,
-        dpi: int,
-) -> None:
-    """
-    Configure the FreeType face.
-
-    Pixel sizing is used instead of the point-size API because our target
-    device is a pixel-addressed 84x48 monochrome LCD.
-
-    DPI is still supplied so FreeType has deterministic horizontal/vertical
-    metrics.
-    """
-    if pixel_height <= 0:
-        raise ValueError("pixel height must be > 0")
-
-    if dpi <= 0:
-        raise ValueError("DPI must be > 0")
-
-    face.set_pixel_sizes(0, pixel_height)
-
-    # Keep the API explicit: the current pixel-size path does not directly
-    # use DPI, but we store it in FontData for reproducibility.
-    _ = dpi
-
-
-def glyph_exists(face: freetype.Face, codepoint: int) -> bool:
-    """Return whether the font contains a glyph for this codepoint."""
-    return face.get_char_index(codepoint) != 0
-
-
-# ---------------------------------------------------------------------------
-# Bitmap conversion
-# ---------------------------------------------------------------------------
-
-def bitmap_pixel(bitmap: freetype.Bitmap, x: int, y: int) -> bool:
-    """
-    Read one pixel from a FreeType MONO bitmap.
-
-    FreeType MONO bitmaps are row-major and pack 8 horizontal pixels
-    into each byte, MSB first.
-    """
-    byte_index = x // 8
-    bit_mask = 0x80 >> (x & 7)
-
-    # pitch may be negative for some bitmap configurations.
-    row = y
-
-    if bitmap.pitch >= 0:
-        offset = row * bitmap.pitch
-    else:
-        offset = (bitmap.rows - 1 - row) * (-bitmap.pitch)
-
-    return bool(bitmap.buffer[offset + byte_index] & bit_mask)
-
-
-def bitmap_to_columns(
-        bitmap: freetype.Bitmap,
-) -> list[int]:
-    """
-    Convert FreeType's row-major MONO bitmap into our column-major format.
-
-    Each output byte represents one vertical column:
-
-        bit 0 = top pixel
-        bit 1 = next pixel
-        ...
-        bit 7 = bottom pixel
-    """
-    width = int(bitmap.width)
-    height = int(bitmap.rows)
-
-    if height > MAX_GLYPH_HEIGHT:
-        raise ValueError(
-            f"glyph bitmap height {height} exceeds "
-            f"maximum supported height {MAX_GLYPH_HEIGHT}"
-        )
-
-    if width == 0 or height == 0:
+def pack_columns(pixels: list[list[bool]]) -> list[int]:
+    if not pixels:
         return []
-
-    columns: list[int] = []
-
-    for x in range(width):
-        value = 0
-
-        for y in range(height):
-            if bitmap_pixel(bitmap, x, y):
-                value |= 1 << y
-
-        columns.append(value)
-
-    return columns
+    h, w = len(pixels), len(pixels[0])
+    return [sum((1 << y) for y in range(h) if pixels[y][x]) for x in range(w)]
 
 
-# ---------------------------------------------------------------------------
-# Glyph extraction
-# ---------------------------------------------------------------------------
-
-def extract_glyph(
-        face: freetype.Face,
-        codepoint: int,
-        bitmap_offset: int,
-) -> tuple[GlyphData, list[int]]:
-    """
-    Load, render and extract one glyph.
-
-    Metrics intentionally follow Adafruit_GFX's fontconvert conventions:
-
-        width
-        height
-        xAdvance
-        xOffset
-        yOffset
-
-    In particular:
-
-        xOffset = bitmap_left
-        yOffset = 1 - bitmap_top
-
-    This means the Rust renderer can use the same baseline semantics.
-    """
-    if not glyph_exists(face, codepoint):
-        raise ValueError(
-            f"font does not contain U+{codepoint:04X}"
-        )
-
-    try:
-        face.load_char(codepoint, LOAD_FLAGS)
-
-        # Explicitly request MONO rendering as Adafruit does.
-        face.glyph.render(RENDER_MODE)
-
-    except Exception as exc:
-        raise RuntimeError(
-            f"failed to rasterize U+{codepoint:04X}"
-        ) from exc
-
+def render_glyph(face, cp: int, *, mode: str, threshold: int, tracking: int, offset: int):
+    if face.get_char_index(cp) == 0:
+        raise ValueError(f'Font lacks glyph U+{cp:04X} ({chr(cp)!r})')
+    flags = freetype.FT_LOAD_DEFAULT
+    if mode == 'mono':
+        flags |= freetype.FT_LOAD_TARGET_MONO
+    else:
+        flags |= freetype.FT_LOAD_TARGET_NORMAL
+    face.load_char(cp, flags)
+    face.glyph.render(freetype.FT_RENDER_MODE_MONO if mode == 'mono' else freetype.FT_RENDER_MODE_NORMAL)
     slot = face.glyph
-    bitmap = slot.bitmap
-
-    width = int(bitmap.width)
-    height = int(bitmap.rows)
-
-    # FreeType's advance is 26.6 fixed point.
-    advance = int(slot.advance.x) >> 6
-
-    # Position of bitmap relative to the baseline/cursor.
-    x_offset = int(slot.bitmap_left)
-
-    # Same convention used by Adafruit_GFX fontconvert.
-    y_offset = 1 - int(slot.bitmap_top)
-
-    validate_u8("glyph.width", width)
-    validate_u8("glyph.height", height)
-    validate_u8("glyph.advance", advance)
-    validate_i8("glyph.x_offset", x_offset)
-    validate_i8("glyph.y_offset", y_offset)
-    validate_u16("glyph.bitmap_offset", bitmap_offset)
-
-    columns = bitmap_to_columns(bitmap)
-
-    # The bitmap width should agree with the generated column count.
-    if len(columns) != width:
-        raise RuntimeError(
-            f"internal bitmap width mismatch for U+{codepoint:04X}: "
-            f"FreeType={width}, columns={len(columns)}"
-        )
-
-    # Empty glyphs such as space legitimately have no pixels.
-    # Their advance is still meaningful.
-    if width > 0 and advance < width + max(0, x_offset):
-        # Do not silently "fix" FreeType's metrics.
-        # This is only a sanity warning-worthy condition.
-        pass
-
-    glyph = GlyphData(
-        width=width,
-        height=height,
-        advance=advance,
-        x_offset=x_offset,
-        y_offset=y_offset,
-        bitmap_offset=bitmap_offset,
-    )
-
-    return glyph, columns
+    bm = slot.bitmap
+    width, height = int(bm.width), int(bm.rows)
+    if height > 8:
+        raise ValueError(f'U+{cp:04X} has {height}px height; format supports 8px max. Reduce --pixel-height.')
+    advance = max(1, (int(slot.advance.x) + 32) // 64 + tracking)
+    # Empty glyph: space has no bitmap. Preserve the meaningful advance.
+    if width == 0 or height == 0:
+        return GlyphData(0, 0, advance, 0, 0, offset), []
+    pixels = [[read_pixel(bm, x, y, mode) >= threshold for x in range(width)] for y in range(height)]
+    # Grayscale threshold can completely erase small dots; keep a single strongest
+    # pixel rather than silently turning visible punctuation into whitespace.
+    if not any(map(any, pixels)) and mode == 'gray':
+        strongest = max(((read_pixel(bm, x, y, mode), x, y) for y in range(height) for x in range(width)), default=None)
+        if strongest and strongest[0] > 0:
+            pixels[strongest[2]][strongest[1]] = True
+    # Crop transparent edges, updating the original FreeType metrics accordingly.
+    xs = [x for y in range(height) for x in range(width) if pixels[y][x]]
+    ys = [y for y in range(height) for x in range(width) if pixels[y][x]]
+    if not xs:
+        return GlyphData(0, 0, advance, 0, 0, offset), []
+    left, right, top, bottom = min(xs), max(xs), min(ys), max(ys)
+    cropped = [row[left:right + 1] for row in pixels[top:bottom + 1]]
+    width, height = right - left + 1, bottom - top + 1
+    x_offset = int(slot.bitmap_left) + left
+    y_offset = 1 - int(slot.bitmap_top) + top
+    for name, value, lo, hi in [('width', width, 0, 255), ('height', height, 0, 8), ('advance', advance, 0, 255),
+                                ('x_offset', x_offset, -128, 127), ('y_offset', y_offset, -128, 127),
+                                ('bitmap_offset', offset, 0, 65535)]:
+        check_bits(f'U+{cp:04X}.{name}', value, lo, hi)
+    return GlyphData(width, height, advance, x_offset, y_offset, offset), pack_columns(cropped)
 
 
-# ---------------------------------------------------------------------------
-# Font generation
-# ---------------------------------------------------------------------------
-
-def generate(
-        font_path: Path,
-        *,
-        pixel_height: int,
-        first: int = DEFAULT_FIRST,
-        last: int = DEFAULT_LAST,
-        dpi: int = DEFAULT_DPI,
-        allow_missing: bool = False,
-) -> FontData:
-    """
-    Generate the complete bitmap font.
-    """
-    validate_range(first, last)
-
-    if not 1 <= pixel_height <= MAX_GLYPH_HEIGHT:
-        raise ValueError(
-            f"pixel height must be between 1 and "
-            f"{MAX_GLYPH_HEIGHT}"
-        )
-
-    face = load_face(font_path)
-    configure_face(
-        face,
-        pixel_height=pixel_height,
-        dpi=dpi,
-    )
-
-    glyphs: list[GlyphData] = []
-    bitmap: list[int] = []
-
-    for codepoint in range(first, last + 1):
-        if not glyph_exists(face, codepoint):
-            if allow_missing:
-                glyphs.append(
-                    GlyphData(
-                        width=0,
-                        height=0,
-                        advance=0,
-                        x_offset=0,
-                        y_offset=0,
-                        bitmap_offset=len(bitmap),
-                    )
-                )
-                continue
-
-            raise ValueError(
-                f"font is missing U+{codepoint:04X} "
-                f"({chr(codepoint)!r})"
-            )
-
-        glyph, columns = extract_glyph(
-            face,
-            codepoint,
-            bitmap_offset=len(bitmap),
-        )
-
-        bitmap.extend(columns)
+def generate(path: Path, *, pixel_height: int, first: int, last: int,
+             mode: str, threshold: int, tracking: int, line_height: int | None,
+             allow_missing: bool, dpi: int) -> FontData:
+    check_bits('first', first, 0, 255)
+    check_bits('last', last, first, 255)
+    check_bits('pixel_height', pixel_height, 1, 32)
+    check_bits('threshold', threshold, 1, 255)
+    check_bits('dpi', dpi, 1, 10000)
+    if not path.is_file():
+        raise ValueError(f'Font not found: {path}')
+    face = freetype.Face(str(path))
+    face.set_pixel_sizes(0, pixel_height)  # DPI intentionally does not apply to pixel sizing.
+    glyphs, bitmap = [], []
+    for cp in range(first, last + 1):
+        if face.get_char_index(cp) == 0 and allow_missing:
+            glyphs.append(GlyphData(0, 0, 0, 0, 0, len(bitmap)))
+            continue
+        glyph, packed = render_glyph(face, cp, mode=mode, threshold=threshold,
+                                     tracking=tracking, offset=len(bitmap))
         glyphs.append(glyph)
-
-        if len(bitmap) > MAX_BITMAP_OFFSET:
-            raise ValueError(
-                f"bitmap is too large: {len(bitmap)} bytes; "
-                f"bitmap_offset is u16"
-            )
-
-    # FreeType's recommended vertical distance between baselines.
-    #
-    # With set_pixel_sizes(), face.size.metrics.height is expressed
-    # in 26.6 pixel units.
-    y_advance = int(face.size.height) >> 6
-
-    # Be conservative if the font reports zero.
-    if y_advance <= 0:
-        y_advance = pixel_height
-
-    validate_u8("y_advance", y_advance)
-
-    return FontData(
-        glyphs=glyphs,
-        bitmap=bitmap,
-        first=first,
-        last=last,
-        y_advance=y_advance,
-        pixel_height=pixel_height,
-        dpi=dpi,
-    )
+        bitmap.extend(packed)
+        if len(bitmap) > 65535:
+            raise ValueError('Bitmap exceeds maximum u16 addressable size')
+    # Derive minimum safe baseline distance from real ink extents.
+    visible = [g for g in glyphs if g.width and g.height]
+    min_top = min((g.y_offset for g in visible), default=0)
+    max_bottom = max((g.y_offset + g.height - 1 for g in visible), default=0)
+    min_line_height = max_bottom - min_top + 2  # 1px separation
+    y_advance = line_height if line_height is not None else min_line_height
+    if y_advance < min_line_height:
+        print(f'warning: line-height {y_advance} can overlap glyphs (recommended >= {min_line_height})',
+              file=sys.stderr)
+    check_bits('y_advance', y_advance, 1, 255)
+    return FontData(glyphs, bitmap, first, last, y_advance, pixel_height, dpi)
 
 
-# ---------------------------------------------------------------------------
-# Rust output
-# ---------------------------------------------------------------------------
-
-def rust_ident_from_path(path: Path) -> str:
-    """
-    Generate a safe-ish Rust identifier from the font filename.
-
-    Example:
-
-        Vazirmatn-Regular.ttf
-        -> VAZIRMATN_REGULAR_FONT
-    """
-    raw = path.stem.upper()
-
-    chars = []
-    for char in raw:
-        if char.isalnum():
-            chars.append(char)
-        else:
-            chars.append("_")
-
-    name = "".join(chars).strip("_")
-
-    if not name:
-        name = "BITMAP"
-
-    if name[0].isdigit():
-        name = "_" + name
-
-    return f"{name}_FONT"
+def rust_identifier(path: Path) -> str:
+    result = re.sub(r'[^A-Za-z0-9_]', '_', path.stem).upper().strip('_') or 'BITMAP'
+    return ('_' if result[0].isdigit() else '') + result + '_FONT'
 
 
-def render_rust(
-        font: FontData,
-        *,
-        source_font: Path,
-        font_name: str,
-        bytes_per_line: int = 16,
-) -> str:
-    """
-    Render FontData as a Rust source file.
-    """
-    lines: list[str] = []
-
-    lines.append("// @generated by tools/fontgen.py; DO NOT EDIT.")
-    lines.append("//")
-    lines.append(f"// Source font : {source_font.name}")
-    lines.append(f"// Pixel height: {font.pixel_height}")
-    lines.append(f"// DPI         : {font.dpi}")
-    lines.append(
-        f"// Glyph range : U+{font.first:04X}..U+{font.last:04X}"
-    )
-    lines.append(f"// Glyphs      : {len(font.glyphs)}")
-    lines.append(f"// Bitmap      : {len(font.bitmap)} bytes")
-    lines.append("")
-    lines.append("use crate::screen::font::{BitmapFont, Glyph};")
-    lines.append("")
-    lines.append(f"pub(super) static {font_name}: BitmapFont = BitmapFont {{")
-    lines.append("    glyphs: &[")
-
-    for index, glyph in enumerate(font.glyphs):
-        codepoint = font.first + index
-
-        if 0x20 <= codepoint <= 0x7E:
-            comment = f" // U+{codepoint:04X} {chr(codepoint)!r}"
-        else:
-            comment = f" // U+{codepoint:04X}"
-
-        lines.append(
-            "        Glyph { "
-            f"width: {glyph.width}, "
-            f"height: {glyph.height}, "
-            f"advance: {glyph.advance}, "
-            f"x_offset: {glyph.x_offset}, "
-            f"y_offset: {glyph.y_offset}, "
-            f"bitmap_offset: {glyph.bitmap_offset} "
-            f"}},{comment}"
-        )
-
-    lines.append("    ],")
-    lines.append("")
-    lines.append("    bitmap: &[")
-
-    for start in range(0, len(font.bitmap), bytes_per_line):
-        chunk = font.bitmap[start:start + bytes_per_line]
-
-        values = ", ".join(
-            f"0x{value:02X}"
-            for value in chunk
-        )
-
-        lines.append(f"        {values},")
-
-    lines.append("    ],")
-    lines.append(f"    first: 0x{font.first:02X},")
-    lines.append(f"    last: 0x{font.last:02X},")
-    lines.append(f"    y_advance: {font.y_advance},")
-    lines.append("};")
-    lines.append("")
-
-    return "\n".join(lines)
+def render_rust(font: FontData, source_font: Path, name: str, mode: str, threshold: int) -> str:
+    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name):
+        raise ValueError(f'Invalid Rust identifier: {name!r}')
+    lines = [
+        '// @generated by tools/fontgen/fontgen.py; DO NOT EDIT.',
+        f'// Source font : {source_font.name}',
+        f'// Pixel height: {font.pixel_height}',
+        f'// DPI metadata: {font.dpi} (not applied to pixel sizing)',
+        f'// Raster mode : {mode}; threshold: {threshold}',
+        f'// Glyph range : U+{font.first:04X}..U+{font.last:04X}',
+        f'// Glyphs      : {len(font.glyphs)}',
+        f'// Bitmap      : {len(font.bitmap)} bytes',
+        '// Format: one byte per column, bit0 = top, glyph height <= 8.',
+        'use crate::screen::font::{BitmapFont, Glyph};',
+        f'pub static {name}: BitmapFont = BitmapFont {{', '    glyphs: &[',
+    ]
+    for i, g in enumerate(font.glyphs):
+        cp = font.first + i
+        vals = ', '.join(f'{key}: {getattr(g, key)}' for key in
+                         ('width', 'height', 'advance', 'x_offset', 'y_offset', 'bitmap_offset'))
+        lines.append(f'        Glyph {{ {vals} }}, // U+{cp:04X} {chr(cp)!r}')
+    lines.extend(['    ],', '    bitmap: &['])
+    for start in range(0, len(font.bitmap), 16):
+        lines.append('        ' + ', '.join(f'0x{b:02X}' for b in font.bitmap[start:start + 16]) + ',')
+    lines.extend(['    ],', f'    first: 0x{font.first:02X},', f'    last: 0x{font.last:02X},',
+                  f'    y_advance: {font.y_advance},', '};', ''])
+    return '\n'.join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Preview / diagnostics
-# ---------------------------------------------------------------------------
-
-def print_report(font: FontData) -> None:
-    print()
-    print("Font generation successful")
-    print("--------------------------")
-    print(f"Glyph range : U+{font.first:04X}..U+{font.last:04X}")
-    print(f"Glyph count : {len(font.glyphs)}")
-    print(f"Pixel height: {font.pixel_height}")
-    print(f"Y advance   : {font.y_advance}")
-    print(f"Bitmap size : {len(font.bitmap)} bytes")
-
-    if font.bitmap:
-        print(
-            f"Flash data  : "
-            f"{len(font.bitmap)} bitmap + "
-            f"{len(font.glyphs) * 8} glyph metadata bytes"
-        )
-
-    print()
-
-
-def print_glyph_preview(
-        font: FontData,
-        codepoints: Iterable[int],
-) -> None:
-    """
-    Print small ASCII previews of selected glyphs.
-
-    This is deliberately terminal-only and has no dependency on Pillow.
-    """
-    glyphs = font.glyphs
-
-    print("Glyph preview")
-    print("-------------")
-
-    for codepoint in codepoints:
-        if not font.first <= codepoint <= font.last:
+def draw_text(font: FontData, canvas: list[list[int]], x: int, baseline: int, text: str):
+    width, height = len(canvas[0]), len(canvas)
+    start_x = x
+    for ch in text:
+        if ch == '\n':
+            x, baseline = start_x, baseline + font.y_advance
             continue
-
-        glyph = glyphs[codepoint - font.first]
-
-        print(
-            f"U+{codepoint:04X} "
-            f"{chr(codepoint)!r} "
-            f"size={glyph.width}x{glyph.height} "
-            f"advance={glyph.advance} "
-            f"offset=({glyph.x_offset},{glyph.y_offset})"
-        )
-
-        if glyph.width == 0 or glyph.height == 0:
-            print("  <empty>")
-            print()
+        cp = ord(ch)
+        if not font.first <= cp <= font.last:
             continue
-
-        start = glyph.bitmap_offset
-        end = start + glyph.width
-        columns = font.bitmap[start:end]
-
-        for y in range(glyph.height):
-            row = []
-
-            for column in columns:
-                row.append(
-                    "█" if (column & (1 << y)) else " "
-                )
-
-            print("  " + "".join(row))
-
-        print()
+        g = font.glyphs[cp - font.first]
+        if x + g.advance > width and x > start_x:
+            x, baseline = start_x, baseline + font.y_advance
+        for col in range(g.width):
+            bits = font.bitmap[g.bitmap_offset + col]
+            for row in range(g.height):
+                px, py = x + g.x_offset + col, baseline + g.y_offset + row
+                if (bits >> row) & 1 and 0 <= px < width and 0 <= py < height:
+                    canvas[py][px] = 1
+        x += g.advance
 
 
-def default_preview_codepoints(
-        first: int,
-        last: int,
-) -> list[int]:
-    wanted = "AaBb0123@#$%"
-
-    result = []
-
-    for char in wanted:
-        codepoint = ord(char)
-
-        if first <= codepoint <= last:
-            result.append(codepoint)
-
-    return result
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-def parse_int(value: str) -> int:
-    """
-    Parse decimal or 0x-prefixed integer.
-    """
+def preview_png(font: FontData, path: Path, lines: list[str], scale: int):
     try:
-        return int(value, 0)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            f"invalid integer: {value!r}"
-        ) from exc
+        from PIL import Image
+    except ImportError as exc:
+        raise ValueError('For --preview-png install Pillow: python -m pip install Pillow') from exc
+    canvas = [[0] * 84 for _ in range(48)]
+    top = min((g.y_offset for g in font.glyphs if g.width and g.height), default=0)
+    draw_text(font, canvas, 0, max(0, -top), '\n'.join(lines))
+    image = Image.new('RGB', (84, 48), (190, 203, 173))
+    pix = image.load()
+    for y, row in enumerate(canvas):
+        for x, set_bit in enumerate(row):
+            if set_bit:
+                pix[x, y] = (35, 52, 39)
+    image = image.resize((84 * scale, 48 * scale), Image.Resampling.NEAREST)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path)
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-
-    parser.add_argument(
-        "font",
-        type=Path,
-        help="Path to a .ttf/.otf font file",
-    )
-
-    parser.add_argument(
-        "--pixel-height",
-        type=int,
-        default=8,
-        metavar="N",
-        help="Target pixel size passed to FreeType (default: 8)",
-    )
-
-    parser.add_argument(
-        "--dpi",
-        type=int,
-        default=DEFAULT_DPI,
-        help=f"Metric DPI (default: {DEFAULT_DPI})",
-    )
-
-    parser.add_argument(
-        "--first",
-        type=parse_int,
-        default=DEFAULT_FIRST,
-        metavar="CODEPOINT",
-        help="First Unicode codepoint (default: 0x20)",
-    )
-
-    parser.add_argument(
-        "--last",
-        type=parse_int,
-        default=DEFAULT_LAST,
-        metavar="CODEPOINT",
-        help="Last Unicode codepoint (default: 0x7E)",
-    )
-
-    parser.add_argument(
-        "--output",
-        type=Path,
-        required=True,
-        help="Output Rust source file",
-    )
-
-    parser.add_argument(
-        "--name",
-        help=(
-            "Rust static name "
-            "(default: derived from font filename)"
-        ),
-    )
-
-    parser.add_argument(
-        "--allow-missing",
-        action="store_true",
-        help="Allow missing glyphs instead of failing",
-    )
-
-    parser.add_argument(
-        "--preview",
-        action="store_true",
-        help="Print selected glyphs as terminal pixel art",
-    )
-
-    return parser.parse_args()
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-def main() -> int:
-    args = parse_args()
-
-    if not args.font.is_file():
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('font', type=Path)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--name', default=None)
+    parser.add_argument('--pixel-height', type=int, default=8)
+    parser.add_argument('--first', type=integer, default=0x20)
+    parser.add_argument('--last', type=integer, default=0x7e)
+    parser.add_argument('--dpi', type=int, default=141, help='Metadata only; does not affect pixel rasterization')
+    parser.add_argument('--mode', choices=('mono', 'gray'), default='gray')
+    parser.add_argument('--threshold', type=int, default=110, help='Grayscale cutoff 1..255')
+    parser.add_argument('--tracking', type=int, default=1, help='Extra horizontal pixels per character')
+    parser.add_argument('--line-height', type=int, default=None)
+    parser.add_argument('--allow-missing', action='store_true')
+    parser.add_argument('--preview', action='store_true')
+    parser.add_argument('--preview-png', type=Path, default=None)
+    parser.add_argument('--preview-line', action='append', default=None,
+                        help='Repeat to provide multiple preview lines')
+    parser.add_argument('--preview-scale', type=int, default=5)
+    args = parser.parse_args()
+    try:
+        font = generate(args.font, pixel_height=args.pixel_height, first=args.first, last=args.last,
+                        mode=args.mode, threshold=args.threshold, tracking=args.tracking,
+                        line_height=args.line_height, allow_missing=args.allow_missing, dpi=args.dpi)
+        source = render_rust(font, args.font, args.name or rust_identifier(args.font), args.mode, args.threshold)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(source, encoding='utf-8')
         print(
-            f"error: font file not found: {args.font}",
-            file=sys.stderr,
-        )
-        return 1
-
-    try:
-        font = generate(
-            args.font,
-            pixel_height=args.pixel_height,
-            first=args.first,
-            last=args.last,
-            dpi=args.dpi,
-            allow_missing=args.allow_missing,
-        )
-
-        font_name = args.name or rust_ident_from_path(args.font)
-
-        rust = render_rust(
-            font,
-            source_font=args.font,
-            font_name=font_name,
-        )
-
-        args.output.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        args.output.write_text(
-            rust,
-            encoding="utf-8",
-            newline="\n",
-        )
-
-        print_report(font)
-
+            f'{len(font.glyphs)} glyphs | {len(font.bitmap)} bitmap bytes | line-height {font.y_advance}px | {args.output}')
         if args.preview:
-            print_glyph_preview(
-                font,
-                default_preview_codepoints(
-                    args.first,
-                    args.last,
-                ),
-            )
+            for char in 'AaWgyp0!? ':
+                cp = ord(char)
+                if not font.first <= cp <= font.last:
+                    continue
+                g = font.glyphs[cp - font.first]
+                print(f'{char!r}: {g.width}x{g.height}, advance={g.advance}, offset=({g.x_offset},{g.y_offset})')
+                for row in range(g.height):
+                    print('   ' + ''.join(
+                        '#' if font.bitmap[g.bitmap_offset + col] & (1 << row) else '.' for col in range(g.width)))
+        if args.preview_png:
+            preview_png(font, args.preview_png, args.preview_line or ['Hello ESP32!', '0123456789', 'gjpqy ABC!'],
+                        args.preview_scale)
+            print(f'Preview: {args.preview_png}')
+    except (ValueError, RuntimeError, OSError) as exc:
+        parser.error(str(exc))
 
-        print(f"Rust output: {args.output}")
-        print(f"Font symbol: {font_name}")
 
-        return 0
-
-    except (ValueError, RuntimeError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__ == '__main__':
+    main()

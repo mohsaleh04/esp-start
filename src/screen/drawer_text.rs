@@ -1,5 +1,5 @@
 use crate::screen::fmt::ScreenFmtWriter;
-use crate::screen::font::VAZIR_FONT;
+use crate::screen::font::{ASCII_FONT, ASCII_FONT_FIRST_INDEX, VAZIR_FONT};
 use crate::screen::spi::ScreenSpi;
 use crate::screen::{SCREEN_HEIGHT, SCREEN_WIDTH, ScreenController};
 use core::fmt;
@@ -36,43 +36,87 @@ use core::fmt::Write;
 
 /**
  *   Basic Screen Drawer Functions
- */ impl<SPI: ScreenSpi> ScreenController<SPI> {
-    pub fn draw_char(&mut self, anchor: (i16, i16), c: char, inverse: bool) {
+ */
+impl<SPI: ScreenSpi> ScreenController<SPI> {
+    pub fn draw_char(
+        &mut self,
+        anchor: (i16, i16),
+        c: char,
+        inverse: bool,
+    ) {
         if !c.is_ascii() {
             return;
         }
 
-        let codepoint = c as usize;
-        if codepoint < VAZIR_FONT.first as usize || codepoint > VAZIR_FONT.last as usize
-        {
+        let index = c as usize;
+
+        if index < ASCII_FONT_FIRST_INDEX {
             return;
         }
 
-        let glyph_index = codepoint - VAZIR_FONT.first as usize;
-        let Some(glyph) = VAZIR_FONT.glyphs.get(glyph_index) else {
-            return;
-        };
-
-        let bitmap_start = glyph.bitmap_offset as usize;
-        let bitmap_len = glyph.width as usize;
-
-        let Some(bitmap) = VAZIR_FONT.bitmap.get(bitmap_start..bitmap_start + bitmap_len)
+        let Some(columns) =
+            ASCII_FONT.get(index - ASCII_FONT_FIRST_INDEX)
         else {
             return;
         };
 
-        for (col, &column) in bitmap.iter().enumerate() {
-            for row in 0..glyph.height {
-                if column & (1 << row) == 0 {
-                    continue;
+        for (x, &bits) in columns.iter().enumerate() {
+            for y in 0..8 {
+                if bits & (1u8 << y) != 0 {
+                    self.draw_px(
+                        anchor.0 + x as i16,
+                        anchor.1 + y as i16,
+                        inverse,
+                    );
                 }
-
-                let x = anchor.0 + glyph.x_offset as i16 + col as i16;
-                let y = anchor.1 + glyph.y_offset as i16 + row as i16;
-                self.draw_px(x, y, inverse);
             }
         }
     }
+    // pub fn draw_char(
+    //     &mut self,
+    //     anchor: (i16, i16),
+    //     c: char,
+    //     inverse: bool,
+    // ) {
+    //     let codepoint = c as u32;
+    //
+    //     if codepoint < VAZIR_FONT.first as u32
+    //         || codepoint > VAZIR_FONT.last as u32
+    //     {
+    //         return;
+    //     }
+    //
+    //     let index = (codepoint - VAZIR_FONT.first as u32) as usize;
+    //
+    //     let Some(glyph) = VAZIR_FONT.glyphs.get(index) else {
+    //         return;
+    //     };
+    //
+    //     let start = glyph.bitmap_offset as usize;
+    //     let end = start + glyph.width as usize;
+    //
+    //     let Some(columns) = VAZIR_FONT.bitmap.get(start..end) else {
+    //         return;
+    //     };
+    //
+    //     for (col, &bits) in columns.iter().enumerate() {
+    //         for row in 0..glyph.height {
+    //             if bits & (1u8 << row) == 0 {
+    //                 continue;
+    //             }
+    //
+    //             let x = anchor.0
+    //                 + glyph.x_offset as i16
+    //                 + col as i16;
+    //
+    //             let y = anchor.1
+    //                 + glyph.y_offset as i16
+    //                 + row as i16;
+    //
+    //             self.draw_px(x, y, inverse);
+    //         }
+    //     }
+    // }
 
     pub fn draw_text(
         &mut self,
@@ -81,49 +125,24 @@ use core::fmt::Write;
         soft_wrap: bool,
         inverse: bool,
     ) {
-        let line_height = VAZIR_FONT.y_advance as i16;
+        self.draw_fmt(
+            anchor,
+            format_args!("{}", text),
+            soft_wrap,
+            inverse,
+        );
+    }
 
-        let mut x = anchor.0;
-        let mut y = anchor.1;
-
-        for ch in text.chars() {
-            if y + line_height > SCREEN_HEIGHT as i16 {
-                break;
-            }
-
-            if ch == '\n' {
-                x = anchor.0;
-                y += line_height;
-                continue;
-            }
-
-            if !ch.is_ascii() {
-                continue;
-            }
-
-            let codepoint = ch as usize;
-            if codepoint < VAZIR_FONT.first as usize || codepoint > VAZIR_FONT.last as usize
-            {
-                continue;
-            }
-
-            let glyph_index = codepoint - VAZIR_FONT.first as usize;
-            let Some(glyph) = VAZIR_FONT.glyphs.get(glyph_index) else {
-                continue;
-            };
-
-            let advance = glyph.advance as i16;
-            if soft_wrap && x + advance > SCREEN_WIDTH as i16 {
-                x = anchor.0;
-                y += line_height;
-
-                if y + line_height > SCREEN_HEIGHT as i16 {
-                    break;
-                }
-            }
-
-            self.draw_char((x, y), ch, inverse);
-            x += advance;
+    pub(super) fn char_advance(c: char) -> i16 {
+        let codepoint = c as u32;
+        if codepoint < VAZIR_FONT.first as u32 || codepoint > VAZIR_FONT.last as u32 {
+            return 0;
         }
+
+        let index = (codepoint - VAZIR_FONT.first as u32) as usize;
+        VAZIR_FONT
+            .glyphs
+            .get(index)
+            .map_or(0, |glyph| glyph.advance as i16)
     }
 }

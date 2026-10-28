@@ -1,9 +1,12 @@
+use core::fmt::Write;
 use crate::sd::time::FixedTimeSource;
 use core::ops::ControlFlow;
 use embedded_hal::{delay::DelayNs, spi::SpiDevice};
 use embedded_sdmmc::{
     DirEntry, Error as FilesystemError, SdCard, SdCardError, Volume, VolumeIdx, VolumeManager,
 };
+use esp_hal::Blocking;
+use esp_hal::uart::Uart;
 
 pub struct SdStorage<SPI, DELAY>
 where
@@ -56,15 +59,30 @@ where
         }
     }
 
-    pub fn mount(&self) -> Result<MountedSd<'_, SPI, DELAY>, SdStorageError> {
-        let size_bytes = self
-            .manager
-            .device(|card| card.num_bytes())
-            .map_err(SdStorageError::from_card)?;
-        let volume = self
-            .manager
-            .open_volume(VolumeIdx(0))
-            .map_err(SdStorageError::from_filesystem)?;
+    pub fn mount(&self, uart: &mut Uart<Blocking>) -> Result<MountedSd<'_, SPI, DELAY>, SdStorageError> {
+        uart.write_str("SD: starting card initialization...\r\n").unwrap();
+        let size_bytes = match self.manager.device(|card| card.num_bytes()) {
+            Ok(size) => {
+                writeln!(uart, "SD: card detected, size = {} bytes", size).unwrap();
+                size
+            }
+            Err(error) => {
+                writeln!(uart, "SD: card initialization failed: {:?}", error).unwrap();
+                return Err(SdStorageError::from_card(error));
+            }
+        };
+
+        uart.write_str("SD: opening FAT volume...\r\n").unwrap();
+        let volume = match self.manager.open_volume(VolumeIdx(0)) {
+            Ok(volume) => {
+                uart.write_str("SD: FAT volume opened successfully\r\n").unwrap();
+                volume
+            }
+            Err(error) => {
+                writeln!(uart, "SD: FAT volume failed: {:?}", error).unwrap();
+                return Err(SdStorageError::from_filesystem(error));
+            }
+        };
 
         Ok(MountedSd { volume, size_bytes })
     }

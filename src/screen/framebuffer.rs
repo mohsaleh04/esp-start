@@ -19,6 +19,7 @@ impl Framebuffer {
     }
 
     pub(super) fn set_pixel(&mut self, x: usize, y: usize, on: bool) {
+        if x >= SCREEN_WIDTH || y >= SCREEN_HEIGHT { return; }
         let index = x + (y / 8) * SCREEN_WIDTH;
         let mask = 1 << (y % 8);
 

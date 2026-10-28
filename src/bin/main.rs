@@ -11,30 +11,34 @@ use core::panic::PanicInfo;
 
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
+use embedded_hal::spi::SpiBus;
 use embedded_hal_bus::spi::RefCellDevice;
 use esp_hal::Blocking;
 use esp_hal::clock::CpuClock;
 use esp_hal::delay::Delay;
 use esp_hal::gpio::Output;
+use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::pcnt::Pcnt;
-use esp_hal::pcnt::channel::EdgeMode;
 use esp_hal::spi::master::Spi;
+use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::uart::Uart;
 use esp_start::ai::{AiChatRequest, AiClient, AiError};
 use esp_start::bluetooth::{BluetoothEvent, BluetoothManager};
 use esp_start::com::uart;
-use esp_start::io::{self, ButtonId, InputEvent, PinConfig, ScreenOutPins, SdOutPins};
+use esp_start::compass::{CompassCalibration, CompassKind};
+use esp_start::io::{self, ButtonId, InputEvent, ScreenOutPins, SdOutPins};
 use esp_start::leds::{LedController, UPDATE_INTERVAL_MS};
 use esp_start::net::HttpClient;
 use esp_start::screen::{DEFAULT_CONTRAST, ScreenController, ScreenDriver};
 use esp_start::sd::{SdStorage, SdStorageError};
 use esp_start::wifi::WifiNetwork;
-use esp_start::{ai, pcnt, runtime, spi_bus, timer};
+use esp_start::{ai, runtime, spi_bus, timer};
 
 const WIFI_SSID: Option<&str> = option_env!("ESP_START_WIFI_SSID");
 const WIFI_PASSWORD: Option<&str> = option_env!("ESP_START_WIFI_PASSWORD");
 const SERVER_ADDR_IPPORT: (Ipv4Addr, u16) = (Ipv4Addr::new(192, 168, 1, 102), 1234);
+const BLE_LOGGING_ENABLED: bool = false;
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
@@ -58,8 +62,7 @@ async fn main(spawner: Spawner) -> ! {
     io::setup(peripherals.IO_MUX);
     io::setup_backlight_button(peripherals.GPIO32);
     io::setup_led_mode_button(peripherals.GPIO27);
-    uart.write_str("[INPUT] Backlight button ready\r\n")
-        .unwrap();
+    uart.write_str("[INPUT] Backlight button ready\r\n").unwrap();
     uart.write_str("[INPUT] LED mode button ready\r\n").unwrap();
 
     // --- Scheduling ---
@@ -82,6 +85,7 @@ async fn main(spawner: Spawner) -> ! {
     uart.write_str("SUCCESS\r\n").unwrap();
 
     // --- Shared SPI bus ---
+    let sd_out_pins = SdOutPins::new(peripherals.GPIO16);
     let spi_bus = spi_bus::setup(
         peripherals.SPI2,
         peripherals.GPIO18, // SCK
@@ -127,11 +131,17 @@ async fn main(spawner: Spawner) -> ! {
 
     // --- SD card ---
     uart.write_str("[SD] Mounting ... ").unwrap();
-    let sd_out_pins = SdOutPins::new(peripherals.GPIO16);
+    // embedded-sdmmc leaves the >=74 CS-high startup clocks to the caller.
+    // Both devices are deselected here; 0xFF keeps MOSI high for 80 clocks.
+    {
+        let mut bus = spi_bus.borrow_mut();
+        bus.write(&[0xFF; 10]).expect("SD startup clocks failed");
+        bus.flush().expect("SD startup clock flush failed");
+    }
     let sd_spi = RefCellDevice::new(&spi_bus, sd_out_pins.cs, Delay::new()).unwrap();
     let storage = SdStorage::new(sd_spi, Delay::new());
 
-    match storage.mount() {
+    match storage.mount(&mut uart) {
         Ok(sd) => {
             uart.write_str("SUCCESS\r\n").unwrap();
             let size_mb = sd.size_bytes() / 1_048_576;
@@ -142,8 +152,7 @@ async fn main(spawner: Spawner) -> ! {
                     uart,
                     "{} {:?} {} bytes",
                     entry.name, entry.attributes, entry.size
-                )
-                .unwrap();
+                ).unwrap();
                 ControlFlow::Continue(())
             }) {
                 match error {
@@ -167,8 +176,7 @@ async fn main(spawner: Spawner) -> ! {
             WifiNetwork::connect(peripherals.WIFI, &spawner, ssid, WIFI_PASSWORD, &mut uart).await
         }
         None => {
-            uart.write_str("[WIFI] Skipped: ESP_START_WIFI_SSID is not set\r\n")
-                .unwrap();
+            uart.write_str("[WIFI] Skipped: ESP_START_WIFI_SSID is not set\r\n").unwrap();
             None
         }
     };
@@ -180,17 +188,39 @@ async fn main(spawner: Spawner) -> ! {
     // --- Pulse counter on GPIO33 ---
     let pulse_counter = Pcnt::new(peripherals.PCNT);
     let pulse_unit = pulse_counter.unit0;
-    pcnt::setup(
-        &pulse_unit.channel0,
-        peripherals.GPIO33,
-        PinConfig::PullUp.as_input(),
-        EdgeMode::Increment,
-        EdgeMode::Hold,
-    );
-    pulse_unit.clear();
-    pulse_unit.resume();
+    // pcnt::setup(
+    //     &pulse_unit.channel0,
+    //     peripherals.GPIO33,
+    //     PinConfig::PullUp.as_input(),
+    //     EdgeMode::Increment,
+    //     EdgeMode::Hold,
+    // );
+    // pulse_unit.clear();
+    // pulse_unit.resume();
     let mut last_pulse_count = pulse_unit.value();
 
+    // --- Compass ---
+    let mut compass_i2c = I2c::new(
+        peripherals.I2C0,
+        I2cConfig::default().with_frequency(Rate::from_khz(100)),
+    ).unwrap().with_sda(peripherals.GPIO13).with_scl(peripherals.GPIO33);
+
+    let compass = CompassKind::detect(&mut compass_i2c);
+    match compass {
+        Some(kind) => {
+            writeln!(uart, "[COMPASS] Detected: {kind:?}").unwrap();
+
+            if let Err(err) = kind.init(&mut compass_i2c) {
+                writeln!(uart, "[COMPASS] Init failed: {err:?}").unwrap();
+            }
+        }
+        None => {
+            writeln!(uart, "[COMPASS] No supported sensor detected").unwrap();
+        }
+    }
+
+    let mut calibration: Option<CompassCalibration> = None;
+    let mut next_compass_read = Instant::now();
     let mut next_greeting_text = Instant::now() + Duration::from_secs(10);
 
     loop {
@@ -235,16 +265,60 @@ async fn main(spawner: Spawner) -> ! {
             }
         }
 
-        if bluetooth.poll() {
+        if BLE_LOGGING_ENABLED && bluetooth.poll() {
             writeln!(
                 uart,
                 "[BLE] Discovered Devices: {:?}\r\n",
                 bluetooth.devices()
-            )
-            .unwrap();
+            ).unwrap();
         }
 
         leds.update();
+
+        if Instant::now() >= next_compass_read {
+            if let Some(kind) = compass {
+                match kind.read(&mut compass_i2c) {
+                    Ok(field) => {
+                        let cal = calibration.get_or_insert_with(|| {
+                            CompassCalibration::new(field)
+                        });
+
+                        cal.update(field);
+
+                        let (ox, oy, oz) = cal.offset();
+
+                        writeln!(
+                            uart,
+                            "[COMPASS] X={} Y={} Z={}",
+                            field.x, field.y, field.z
+                        ).unwrap();
+
+                        writeln!(
+                            uart,
+                            "[CAL] MIN=({},{},{}) MAX=({},{},{})",
+                            cal.min.x, cal.min.y, cal.min.z,
+                            cal.max.x, cal.max.y, cal.max.z
+                        ).unwrap();
+
+                        writeln!(
+                            uart,
+                            "[CAL] OFFSET=({:.1},{:.1},{:.1})",
+                            ox, oy, oz
+                        ).unwrap();
+
+                        // Screen Test
+                        screen.clear();
+                        screen.draw_fmt((0, 10), format_args!("X:{:.1}\r\nY:{:.1}\r\nZ:{:.1}", ox, oy, oz), true, false, );
+                        screen.flush().unwrap();
+                    }
+                    Err(err) => {
+                        writeln!(uart, "[COMPASS] Read error: {err:?}").unwrap();
+                    }
+                }
+            }
+
+            next_compass_read = Instant::now() + Duration::from_millis(500);
+        }
 
         let pulse_count = pulse_unit.value();
         if pulse_count != last_pulse_count {
@@ -253,7 +327,7 @@ async fn main(spawner: Spawner) -> ! {
         }
 
         // --- AI Chatting ---
-        if Instant::now() >= next_greeting_text {
+        if http_client.is_some() && Instant::now() >= next_greeting_text {
             generate_greeting_msg(&mut uart, &mut screen, &mut http_client).await;
             next_greeting_text += Duration::from_secs(10);
         }
@@ -271,7 +345,7 @@ async fn generate_greeting_msg(
     uart.write_str("Chatting with first model...\r\n").unwrap();
     screen.clear();
     screen.draw_text((0, 0), "Chatting ...", true, false);
-    
+
     let chat_message = AiChatRequest {
         selected_model_name: ai::DEFAULT_MODEL_KEY.to_string(),
         input: "Hi bro! I am Saleh. This is the new first-time attraction with you.".to_string(),
@@ -288,8 +362,7 @@ async fn generate_greeting_msg(
                             uart,
                             "[AI] SendMessage: Received message: {}",
                             output.content
-                        )
-                        .unwrap();
+                        ).unwrap();
                         screen.clear();
                         screen.draw_fmt((0, 0), format_args!("{}", output.content), true, false);
                     }
@@ -303,15 +376,13 @@ async fn generate_greeting_msg(
                     writeln!(
                         uart,
                         "[AI] SendMessage: Request had an error: {error_code:?}"
-                    )
-                    .unwrap();
+                    ).unwrap();
                 }
                 AiError::Json(error) => {
                     writeln!(uart, "[AI] SendMessage: Request parse failed: {error:?}").unwrap();
                 }
             },
-        })
-        .await;
+        }).await;
     }
     if let Err(error) = screen.flush() {
         writeln!(uart, "[LCD] Flush failed: {error:#?}").unwrap();

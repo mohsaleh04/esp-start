@@ -1,8 +1,6 @@
-use crate::screen::font::{
-    ASCII_FONT_CHAR_HEIGHT, ASCII_FONT_CHAR_SPACING, ASCII_FONT_CHAR_WIDTH, ASCII_FONT_LINE_SPACING,
-};
+use crate::screen::font::VAZIR_FONT;
 use crate::screen::spi::ScreenSpi;
-use crate::screen::{SCREEN_WIDTH, ScreenController};
+use crate::screen::{SCREEN_HEIGHT, SCREEN_WIDTH, ScreenController};
 use core::fmt::{self, Write};
 
 pub(super) struct ScreenFmtWriter<'a, SPI: ScreenSpi> {
@@ -28,24 +26,45 @@ impl<'a, SPI: ScreenSpi> ScreenFmtWriter<'a, SPI> {
             inverse,
         }
     }
+
+    fn next_line(&mut self) {
+        self.cursor.0 = self.line_start_x;
+        self.cursor.1 += VAZIR_FONT.y_advance as i16;
+    }
 }
-impl<'a, SPI: ScreenSpi> Write for ScreenFmtWriter<'a, SPI> {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        for ch in s.chars() {
+
+impl<SPI: ScreenSpi> Write for ScreenFmtWriter<'_, SPI> {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        for ch in text.chars() {
             if ch == '\n' {
-                self.cursor.0 = self.line_start_x;
-                self.cursor.1 += ASCII_FONT_CHAR_HEIGHT as i16 + ASCII_FONT_LINE_SPACING as i16;
+                self.next_line();
                 continue;
             }
 
-            self.screen.draw_char(self.cursor, ch, self.inverse);
-            self.cursor.0 += ASCII_FONT_CHAR_WIDTH as i16 + ASCII_FONT_CHAR_SPACING as i16;
+            let advance = ScreenController::<SPI>::char_advance(ch);
 
-            if self.soft_wrap && self.cursor.0 + ASCII_FONT_CHAR_WIDTH as i16 >= SCREEN_WIDTH as i16
-            {
-                self.cursor.0 = self.line_start_x;
-                self.cursor.1 += ASCII_FONT_CHAR_HEIGHT as i16 + ASCII_FONT_LINE_SPACING as i16;
+            if advance == 0 {
+                continue;
             }
+
+            if self.soft_wrap
+                && self.cursor.0 + advance > SCREEN_WIDTH as i16
+                && self.cursor.0 > self.line_start_x
+            {
+                self.next_line();
+            }
+
+            if self.cursor.1 >= SCREEN_HEIGHT as i16 {
+                break;
+            }
+
+            self.screen.draw_char(
+                self.cursor,
+                ch,
+                self.inverse,
+            );
+
+            self.cursor.0 += advance;
         }
 
         Ok(())

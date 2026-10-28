@@ -15,7 +15,7 @@ pub fn setup(
     let spi = Spi::new(
         spi_periph,
         SpiConfig::default()
-            .with_frequency(Rate::from_mhz(1))
+            .with_frequency(Rate::from_mhz(4))
             .with_mode(Mode::_0),
     )
     .expect("failed to setup sd")

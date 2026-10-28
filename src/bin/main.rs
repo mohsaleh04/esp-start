@@ -26,7 +26,7 @@ use esp_hal::uart::Uart;
 use esp_start::ai::{AiChatRequest, AiClient, AiError};
 use esp_start::bluetooth::{BluetoothEvent, BluetoothManager};
 use esp_start::com::uart;
-use esp_start::compass::{CompassCalibration, CompassKind};
+use esp_start::compass::{CompassCalibration, CompassKind, MagneticField};
 use esp_start::io::{self, ButtonId, InputEvent, ScreenOutPins, SdOutPins};
 use esp_start::leds::{LedController, UPDATE_INTERVAL_MS};
 use esp_start::net::HttpClient;
@@ -306,9 +306,14 @@ async fn main(spawner: Spawner) -> ! {
                             ox, oy, oz
                         ).unwrap();
 
+                        let final_field = MagneticField {
+                            x: ((field.x as f32) - ox) as i16,
+                            y: ((field.y as f32) - oy) as i16,
+                            z: ((field.z as f32) - oz) as i16,
+                        };
                         // Screen Test
                         screen.clear();
-                        screen.draw_fmt((0, 10), format_args!("X:{:.1}\r\nY:{:.1}\r\nZ:{:.1}", ox, oy, oz), true, false, );
+                        screen.draw_fmt((0, 10), format_args!("X:{:.1}\r\nY:{:.1}\r\nZ:{:.1}", final_field.x, final_field.y, final_field.z), true, false);
                         screen.flush().unwrap();
                     }
                     Err(err) => {
